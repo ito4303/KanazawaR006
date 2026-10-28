@@ -1,0 +1,261 @@
+---
+title: "Rでクマ出没地図を作成しよう"
+author: "伊東宏樹"
+date: 2028-11-28
+lang: ja
+format: html
+editor: visual
+---
+
+## はじめに
+
+このチュートリアルでは、Rをつかって石川県のクマ出没地図を作成します。
+
+## 準備
+
+```{r}
+#| label: setup
+
+library(tidyverse)
+library(leaflet)
+```
+
+## データ
+
+[いしかわオープンデータカタログ](https://front.opendata.pref.ishikawa.lg.jp)
+
+[石川県クマ出没データ](https://ckan.opendata.pref.ishikawa.lg.jp/dataset/bear_incidents_data)
+
+### データファイル
+
+- R7 ツキノワグマ目撃・痕跡情報- R7目撃情報
+- 石川県クマ出没分析マップ（R1〜R6）- (1)森林からの出没（R1-R6)
+- 石川県クマ出没分析マップ（R1〜R6）- (2)河川からの出没（R1-R6)
+- 石川県クマ出没分析マップ（R1〜R6）- (3)誘引物が要因の出没（R1-R6)
+- 石川県クマ出没分析マップ（R1〜R6）- (4)親離れした若クマによる出没（R1-R6)
+- 石川県クマ出没分析マップ（R1〜R6）- (5)大量出没年に特有の出没（R2)
+
+CSV形式のファイルをダウンロードしておきます。
+
+```{r}
+#| label: file-names
+
+data_files <- c(
+  "data/7584d555-e1f8-4639-b62d-919445970236.csv",
+  "data/bear_incidents_forest_r1-r6.csv",
+  "data/bear_incidents_river_r1-r6.csv",
+  "data/bear_incidents_attractants_r1-r6.csv",
+  "data/bear_incidents_young_bears_r1-r6.csv",
+  "data/bear_incidents_mass_outbreak_r2.csv"
+)
+```
+
+データを読み込む関数を定義します。
+
+2025年用
+
+```{r}
+
+# 2025年のデータを読み込む
+# 
+read_data_2025 <- function(file) {
+  d <- read_csv(file) |>
+    dplyr::mutate(ID = as.character(`_id`),
+                  Year = 2025,
+                  Date = ymd(`出没日`),
+                  Month = month(Date)) |>
+    dplyr::rename(Latitude = `緯度`,
+                  Longitude = `経度`,
+                  Time = `時間`,
+                  City = `市町名`,
+                  Location = `場所`,
+                  Note = `備考`,
+                  Num = `頭数`) |>
+    dplyr::select(ID, Latitude, Longitude,
+                  Date, Time, Year, Month,
+                  City, Location, Note, Num)
+}
+```
+
+2019-2024年用
+
+```{r}
+# 2019-2024年
+read_data_2019 <- function(file) {
+  d <- read_csv(file)
+  
+  # `出没年` が "R1"〜"R6" の形式かチェック
+  bad <- d |>
+    dplyr::filter(!str_detect(`出没年`, "^R[1-6]$"))
+  if (nrow(bad) > 0) {
+    stop(sprintf("%s: `出没年`が想定外の形式の行が %d 件あります: %s",
+                 file, nrow(bad),
+                 paste(unique(bad$`出没年`), collapse = ", ")))
+  }
+  
+  d <- d |>
+    dplyr::mutate(
+      # 出没年: "R1, R2, ..." を西暦に変換します
+      # 2文字目を数値に変換して2018をたします
+      Year = as.numeric(str_sub(`出没年`, 2)) + 2018,
+      # 日付:
+      Date = case_when(
+        # "R1..."という形式の場合
+        str_detect(`出没日`, "^R[1-9]") ~
+          # 元号を西暦に置換してからymd()関数にわたします
+          str_replace(`出没日`, "^R[1-9]",
+                      as.character(Year)) |>
+          ymd(),
+        # "2019...""という形式の場合
+        str_detect(`出没日`, "^2[0-9]{3}") ~
+          # そのままymd()関数にわたします
+          ymd(`出没日`),
+        # その他は欠損値に
+        TRUE ~ as.Date(NA)),
+      # 月:
+      Month = month(Date),
+      # ID: 年を先頭につけます
+      ID = sprintf("%d-%s", Year, as.character(`ID`))) |>
+    dplyr::rename(Latitude = `緯度`,
+                  Longitude = `経度`,
+                  Time = `時刻`,
+                  City = `市町名`,
+                  Location = `場所`,
+                  Note = `備考`,
+                  Num = `頭数`) |>
+    dplyr::select(ID, Latitude, Longitude,
+                  Date, Time, Year, Month,
+                  City, Location, Note, Num)
+}
+```
+
+テスト
+
+```{r}
+read_data_2019(data_files[2])
+```
+
+読み込み
+
+```{r}
+#| label: read-data-files
+
+data_list <- purrr::map(
+  data_files,
+  \(f) if (f == data_files[1])  # 2025年
+         read_data_2025(f)
+       else                     # 2025年以外
+         read_data_2019(f)
+)
+```
+
+読み込んだデータの確認
+
+```{r}
+purrr::map_vec(
+  data_list,
+  \(d) nrow(d)
+)
+```
+
+ファイルをダウンロードせずに直接読み込むことも可能です（例示だけです）。
+
+```{r}
+#| eval: false
+
+library(httr2)
+
+base_url <- "https://ckan.opendata.pref.ishikawa.lg.jp/api/3/action/datastore_search"
+
+fetch_page <- function(offset, limit = 1000) {
+  request(base_url) |>
+    req_url_query(resource_id = "8f01fa0b-704f-4d34-a53b-42d481cf885c",
+                  limit = limit, offset = offset) |>
+    req_perform() |>
+    resp_body_json()
+}
+
+first <- fetch_page(0)
+total <- first$result$total
+records <- first$result$records
+offset <- 1000
+while (offset < total) {
+  records <- c(records, fetch_page(offset)$result$records)
+  offset <- offset + 1000
+}
+
+df <- dplyr::bind_rows(records)
+```
+
+読み込んだデータを結合します。
+
+```{r}
+#| label: combine-data
+
+data_bind <- bind_rows(data_list)
+```
+
+IDに重複がないか確認します。
+
+```{r}
+data_bind |>
+  dplyr::pull(ID) |>
+  table() |>
+  sort(decreasing = TRUE) |>
+  head(20)
+```
+
+重複しているIDのデータを確認します。
+
+```{r}
+data_bind |>
+  dplyr::filter(ID == "2020-1083")
+```
+
+```{r}
+data_bind |>
+  dplyr::filter(ID == "2019-2075")
+```
+
+IDが重複しているデータを`distinct()`関数でまとめます。
+
+```{r}
+data_bind <- data_bind |>
+  dplyr::distinct(ID, .keep_all = TRUE)
+```
+
+再度、重複しているIDがないか確認します。
+
+```{r}
+data_bind |>
+  dplyr::pull(ID) |>
+  table() |>
+  sort(decreasing = TRUE) |>
+  head(20)
+```
+
+なお、もとのデータにはIDが数字ではなく"v"という行がありました。入力ミスの可能性が高いと思われます。2024年以前のデータでチェックします。
+
+```{r}
+purrr::map(
+  data_files[-1],
+  \(f) read_csv(f, show_col_types = FALSE) |>
+    dplyr::filter(str_detect(ID, "^\\d+$", negate = TRUE))
+)
+```
+
+これが他と重複していないか、ほかに同じ日時のデータがないかを確認することでチェックします。
+
+```{r}
+data_bind |> filter(Date == "2020-10-31", Time == "6時15分")
+```
+
+## 地図上に表示
+
+leafletを使用して、OpenStreetMapのうえにクマの出没データのある地点にマーカーを置きます。
+
+```{r}
+leaflet(data = data_bind) |>
+  addTiles() |>
+  addMarkers(lng = ~Longitude, lat = ~Latitude)
+```
