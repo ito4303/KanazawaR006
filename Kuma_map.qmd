@@ -1,7 +1,7 @@
 ---
 title: "Rでクマ出没地図を作成しよう"
 author: "伊東宏樹"
-date: 2028-11-28
+date: 2026-11-28
 lang: ja
 format: html
 editor: visual
@@ -9,9 +9,11 @@ editor: visual
 
 ## はじめに
 
-このチュートリアルでは、Rをつかって石川県のクマ出没地図を作成します。
+このチュートリアルでは、Rのleafletパッケージをつかった地図の表示方法について説明します。題材として、石川県のクマ出没情報を用い、その位置を地図上にプロットしていきます。
 
 ## 準備
+
+tidyverseパッケージを読み込みます。また、地図表示のためleafletパッケージを使用します。
 
 ```{r}
 #| label: setup
@@ -22,11 +24,11 @@ library(leaflet)
 
 ## データ
 
-[いしかわオープンデータカタログ](https://front.opendata.pref.ishikawa.lg.jp)
-
-[石川県クマ出没データ](https://ckan.opendata.pref.ishikawa.lg.jp/dataset/bear_incidents_data)
+データとして、[いしかわオープンデータカタログ](https://front.opendata.pref.ishikawa.lg.jp)にある[石川県クマ出没データ](https://ckan.opendata.pref.ishikawa.lg.jp/dataset/bear_incidents_data)を使用します。
 
 ### データファイル
+
+上のサイトから、以下の6つのCSV形式のファイルをダウンロードしておきます。
 
 - R7 ツキノワグマ目撃・痕跡情報- R7目撃情報
 - 石川県クマ出没分析マップ（R1〜R6）- (1)森林からの出没（R1-R6)
@@ -35,10 +37,10 @@ library(leaflet)
 - 石川県クマ出没分析マップ（R1〜R6）- (4)親離れした若クマによる出没（R1-R6)
 - 石川県クマ出没分析マップ（R1〜R6）- (5)大量出没年に特有の出没（R2)
 
-CSV形式のファイルをダウンロードしておきます。
+ダウンロードしたデータは`data`ディレクトリに入れておきます。
 
 ```{r}
-#| label: file-names
+#| label: data-files
 
 data_files <- c(
   "data/7584d555-e1f8-4639-b62d-919445970236.csv",
@@ -50,36 +52,51 @@ data_files <- c(
 )
 ```
 
+### データ読み込み
+
 データを読み込む関数を定義します。
 
-2025年用
+まず、2025年用の関数です。
+
+時刻は、分は無視して、時単位の数値データとしました（最初の数値だけ見る）。時刻が「17時30分～19時頃」のように時間帯で記されている場合は、始点の時刻としました。
 
 ```{r}
+#| label: define-read-function-2025
 
 # 2025年のデータを読み込む
-# 
 read_data_2025 <- function(file) {
   d <- read_csv(file) |>
-    dplyr::mutate(ID = as.character(`_id`),
+    dplyr::mutate(ID = str_c("2025-", as.character(`_id`)),
                   Year = 2025,
                   Date = ymd(`出没日`),
-                  Month = month(Date)) |>
+                  Month = month(Date),
+                  # 時刻:
+                  Time = stringi::stri_trans_nfkc(`時間`),  # 正規化
+                  Hour = str_extract(Time, "\\d+") |> as.numeric(),
+                  # 頭数: 正規化のうえ数値を抜きだして、数値型にします
+                  Num = stringi::stri_trans_nfkc(`頭数`) |>
+                    str_extract("\\d") |>
+                    as.numeric()) |>
     dplyr::rename(Latitude = `緯度`,
                   Longitude = `経度`,
-                  Time = `時間`,
                   City = `市町名`,
                   Location = `場所`,
-                  Note = `備考`,
-                  Num = `頭数`) |>
+                  Note = `備考`) |>
     dplyr::select(ID, Latitude, Longitude,
-                  Date, Time, Year, Month,
+                  Date, Time, Year, Month, Hour,
                   City, Location, Note, Num)
 }
 ```
 
-2019-2024年用
+2019-2024年用の関数です。2025年のデータと列名や形式が異なるため、別の関数にしています。主な違いは次のとおりです。
+
+- `出没年`が元号ローマ字+年表記（"R1"〜"R6"）なので、想定外の形式がないかを最初にチェックし、あれば`stop()`でエラーにします。その後、西暦（令和の年 + 2018）に変換します。
+- `出没日`は、Excelのシリアル値（例: 43800）、"R1.5.3"のような元号ローマ字表記、"2019/5/3"のような西暦表記が混在しているため、`case_when()`で形式ごとに処理します。どれにも当てはまらないものは欠損値になります。
+- IDは年ごとに連番が振られていて他の年と重なる可能性があるため、先頭に年をつけます。
 
 ```{r}
+#| label: define-read-function-2019
+
 # 2019-2024年
 read_data_2019 <- function(file) {
   d <- read_csv(file)
@@ -100,6 +117,10 @@ read_data_2019 <- function(file) {
       Year = as.numeric(str_sub(`出没年`, 2)) + 2018,
       # 日付:
       Date = case_when(
+        # Excelのシリアル値の場合
+        str_detect(`出没日`, "^4[0-9]{4}$") ~
+          # Excelの起点は1899-12-30です
+          as.Date(as.numeric(`出没日`), origin = "1899-12-30"),
         # "R1..."という形式の場合
         str_detect(`出没日`, "^R[1-9]") ~
           # 元号を西暦に置換してからymd()関数にわたします
@@ -114,28 +135,35 @@ read_data_2019 <- function(file) {
         TRUE ~ as.Date(NA)),
       # 月:
       Month = month(Date),
+      # 時刻:
+      Time = stringi::stri_trans_nfkc(`時刻`),  # 正規化
+      Hour = str_extract(Time, "\\d+") |> as.numeric(),
+      # 頭数: 正規化のうえ数値を抜きだして、数値型にします
+      Num = stringi::stri_trans_nfkc(`頭数`) |>
+            str_extract("\\d") |>
+            as.numeric(),
       # ID: 年を先頭につけます
       ID = sprintf("%d-%s", Year, as.character(`ID`))) |>
     dplyr::rename(Latitude = `緯度`,
                   Longitude = `経度`,
-                  Time = `時刻`,
                   City = `市町名`,
                   Location = `場所`,
-                  Note = `備考`,
-                  Num = `頭数`) |>
+                  Note = `備考`) |>
     dplyr::select(ID, Latitude, Longitude,
-                  Date, Time, Year, Month,
+                  Date, Time, Year, Month, Hour,
                   City, Location, Note, Num)
 }
 ```
 
-テスト
+試しに、2番目のファイルで関数が動作することを確認します。
 
 ```{r}
+#| label: test-read-function
+
 read_data_2019(data_files[2])
 ```
 
-読み込み
+読み込みます。
 
 ```{r}
 #| label: read-data-files
@@ -149,16 +177,15 @@ data_list <- purrr::map(
 )
 ```
 
-読み込んだデータの確認
+読み込んだ行数を表示します。異常な数値でないことを確認します。
 
 ```{r}
-purrr::map_vec(
-  data_list,
-  \(d) nrow(d)
-)
+#| label: count-rows
+
+purrr::map_int(data_list, nrow)
 ```
 
-ファイルをダウンロードせずに直接読み込むことも可能です（例示だけです）。
+なお、ファイルをダウンロードせずに、サイトのAPIを利用して直接読み込むことも可能です（ここでは例示だけです）。
 
 ```{r}
 #| eval: false
@@ -187,6 +214,8 @@ while (offset < total) {
 df <- dplyr::bind_rows(records)
 ```
 
+### 前処理
+
 読み込んだデータを結合します。
 
 ```{r}
@@ -198,6 +227,8 @@ data_bind <- bind_rows(data_list)
 IDに重複がないか確認します。
 
 ```{r}
+#| label: check-duplicate-ID
+
 data_bind |>
   dplyr::pull(ID) |>
   table() |>
@@ -205,21 +236,37 @@ data_bind |>
   head(20)
 ```
 
-重複しているIDのデータを確認します。
+重複しているIDのデータのひとつを確認します。
 
 ```{r}
+#| label: show-duplicate-1
+
 data_bind |>
   dplyr::filter(ID == "2020-1083")
 ```
 
+もうひとつ確認します。
+
 ```{r}
+#| label: show-duplicate-2
+
 data_bind |>
   dplyr::filter(ID == "2019-2075")
 ```
 
-IDが重複しているデータを`distinct()`関数でまとめます。
+同じデータなので、IDが重複しているデータを`distinct()`関数でまとめます。まず、IDが同じ行が全列でも同一かどうかを確認します（`0`なら、IDだけで重複を除いても情報が失われません）。
 
 ```{r}
+#| label: check-identical-rows
+
+nrow(dplyr::distinct(data_bind, ID)) - nrow(dplyr::distinct(data_bind))
+```
+
+結果は`0`ではなく、IDが同じで、内容が異なるデータがあることをしめしています。ただ、確認すると表記揺れなどでしたので、このまま続行します。
+
+```{r}
+#| label: remove-duplicates
+
 data_bind <- data_bind |>
   dplyr::distinct(ID, .keep_all = TRUE)
 ```
@@ -227,6 +274,8 @@ data_bind <- data_bind |>
 再度、重複しているIDがないか確認します。
 
 ```{r}
+#| label: check-duplicate-ID-again
+
 data_bind |>
   dplyr::pull(ID) |>
   table() |>
@@ -234,9 +283,11 @@ data_bind |>
   head(20)
 ```
 
-なお、もとのデータにはIDが数字ではなく"v"という行がありました。入力ミスの可能性が高いと思われます。2024年以前のデータでチェックします。
+なお、もとのデータにはIDが数字ではなく"v"という行がありました。入力ミスの可能性が高いと思われます。2024年以前のデータで、IDに数値以外の文字が含まれている行をチェックします。
 
 ```{r}
+#| label: check-nonnumeric-ID
+
 purrr::map(
   data_files[-1],
   \(f) read_csv(f, show_col_types = FALSE) |>
@@ -247,15 +298,166 @@ purrr::map(
 これが他と重複していないか、ほかに同じ日時のデータがないかを確認することでチェックします。
 
 ```{r}
+#| label: check-same-datetime
+
 data_bind |> filter(Date == "2020-10-31", Time == "6時15分")
+```
+
+`Date`が欠損値の行を確認します。
+
+```{r}
+#| label: check-missing-date
+
+data_bind |>
+  dplyr::filter(is.na(Date)) |>
+  dplyr::select(ID, Date, Year, City, Location)
+```
+
+`Hour`が欠損値で、`Time`が欠損値でない行を確認します。
+
+```{r}
+#| label: check-missing-hour
+
+data_bind |>
+  dplyr::filter(is.na(Hour), !is.na(Time)) |>
+  dplyr::select(ID, Date, Time, Hour)
+```
+
+緯度・経度の欠損と、石川県のおおよその範囲（緯度36.0〜37.6、経度136.2〜137.4）から外れた値がないかを確認します。この範囲は県境そのものではなく長方形なので、隣県の一部は検出できません。0行なら問題なしです。
+
+```{r}
+#| label: check-coordinates
+
+data_bind |>
+  dplyr::filter(is.na(Latitude) | is.na(Longitude) |
+                !between(Latitude, 36.0, 37.6) |
+                !between(Longitude, 136.2, 137.4)) |>
+  dplyr::select(ID, Latitude, Longitude, City, Location)
+```
+
+## グラフで確認
+
+データをグラフで確認します。
+
+### 年別の出没情報件数
+
+```{r}
+#| label: plot-yearly-occurrence
+
+data_bind |>
+  dplyr::group_by(Year) |>
+  dplyr::tally() |>
+  ggplot(aes(x = Year, y = n)) +
+  geom_col() +
+  labs(title = "年ごとの出没情報件数",
+       x = "年",
+       y = "件数") +
+  theme_gray(base_family = "Noto Sans JP")
+```
+
+### 月別の出没情報件数
+
+```{r}
+#| label: plot-monthly-occurrence
+
+data_bind |>
+  dplyr::mutate(Month = as.factor(Month)) |>
+  dplyr::group_by(Month) |>
+  dplyr::tally() |>
+  ggplot(aes(x = Month, y = n)) +
+  geom_col() +
+  labs(title = "月ごとの出没情報件数",
+       x = "月",
+       y = "件数") +
+  theme_gray(base_family = "Noto Sans JP")
+```
+
+### 時間帯別の出没情報件数
+
+```{r}
+#| label: plot-hourly-occurrence
+
+data_bind |>
+  dplyr::mutate(Hour = as.factor(Hour)) |>
+  dplyr::group_by(Hour) |>
+  dplyr::tally() |>
+  ggplot(aes(x = Hour, y = n)) +
+  geom_col() +
+  labs(title = "時間帯ごとの出没情報件数",
+       x = "時間帯",
+       y = "件数") +
+  theme_gray(base_family = "Noto Sans JP")
 ```
 
 ## 地図上に表示
 
-leafletを使用して、OpenStreetMapのうえにクマの出没データのある地点にマーカーを置きます。
+### leafletを使用した地図
+
+leafletを使用して、地図を表示します。デフォルトの地図はOpenStreetMapです。
 
 ```{r}
-leaflet(data = data_bind) |>
+#| label: view-kuma-map
+
+kuma_map <- leaflet(data = data_bind) |>
   addTiles() |>
+  setView(lng = 136.6, lat = 36.7, zoom = 8)
+kuma_map
+```
+
+クマの出没データのある地点にマーカーを置きます。`lng`と`lat`には、`~`をつけて列名を指定します（`leaflet()`に渡したデータの列として評価されます）。
+
+```{r}
+#| label: add-markers
+
+kuma_map |>
   addMarkers(lng = ~Longitude, lat = ~Latitude)
 ```
+
+近いマーカーをクラスター化します。
+
+```{r}
+#| label: clustr-markers
+
+years <- sort(unique(data_bind$Year))
+
+kuma_map |>
+  addMarkers(lng = ~Longitude, lat = ~Latitude,
+             clusterOptions = TRUE)
+```
+
+### 地理院タイル
+
+地図を地理院タイルにすることもできます。利用可能なタイルの種類は以下にあります。
+
+<https://maps.gsi.go.jp/development/ichiran.html>
+
+ここでは、電子国土基本図（オルソ画像）（2007年～）を地図として表示します。マーカーを円形にして、年ごとに色を変えます。
+
+```{r}
+#| label: gsi-tiles
+
+# カラーパレット
+# 1の黒はつかわない
+pal_colors <- palette.colors(n = 8, palette = "Okabe-Ito",
+                             recycle = TRUE)
+
+leaflet(data = data_bind) |>
+  addTiles(urlTemplate = "https://cyberjapandata.gsi.go.jp/xyz/ort/{z}/{x}/{y}.jpg",
+           attribution = "<a href='https://maps.gsi.go.jp/development/ichiran.html'>国土地理院</a>") |>
+  setView(lng = 136.6, lat = 36.7, zoom = 8) |>
+  addCircleMarkers(lng = ~Longitude, lat = ~Latitude,
+                   color = ~pal_colors[Year - 2017],
+                   opacity = 0.9,
+                   fillOpacity = 0.5,
+                   radius = 5,
+                   weight = 3) |>
+  addLegend("bottomright",
+            colors = unname(pal_colors[years - 2017]),
+            labels = years,
+            title = "出没年",
+            opacity = 0.9)
+```
+
+拡大してみると、森林と市街地の境界附近で出没情報が多いことがわかります。
+
+## おわりに
