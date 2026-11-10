@@ -58,3 +58,7 @@ data/
 # Output files and intermediate files
 *.html
 *_files/
+
+# QGIS files
+*.qgz
+

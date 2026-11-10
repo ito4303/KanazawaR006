@@ -1,0 +1,55 @@
+---
+title: "いろいろなデータを地図にかさねる"
+author: "伊東宏樹"
+format: revealjs
+date: 2026-11-28
+lang: ja
+editor: visual
+---
+
+## 内容
+
+```{r}
+#| label: setup
+
+library(kokudosuuchi)
+library(sf)
+library(tidyverse)
+```
+
+国土数値情報
+
+2026年の石川県の行政区域データ
+
+```{r}
+data_file <- file.path("data", "N03-20260101_17_GML.zip")
+d <- readKSJData(data_file, encoding = "UTF-8") |>
+  translateKSJData()
+```
+
+plot
+
+```{r}
+ggplot(d[[1]]) +
+  geom_sf()
+```
+
+将来人口
+
+```{r}
+data_file <- file.path("data", "1km_mesh_2024_17_GEOJSON",
+                       "1km_mesh_2024_17.geojson")
+d_ppl <- st_read(data_file)
+```
+
+2020年男女計総数人口
+
+```{r}
+ggplot(d_ppl) +
+  geom_sf(aes(fill = PTN_2020), color = NA) +
+  scale_fill_viridis_c(name = "人口",
+                       transform = "log1p",
+                       breaks = c(10, 100, 1000, 5000)) +
+  labs(title = "2020年1kmメッシュごと人口") +
+  theme_void()
+```

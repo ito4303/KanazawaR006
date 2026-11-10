@@ -1,0 +1,138 @@
+---
+title: "ggcubeで3D地図"
+author: "伊東宏樹"
+format: revealjs
+editor: visual
+---
+
+## やること
+
+3D地図を描画
+
+```{r}
+#| label: setup
+
+library(tidyverse)
+library(sf)
+library(xml2)
+library(akima)
+library(geometry)
+library(ggplot2)
+library(ggcube)
+```
+
+データ
+
+国土地理院基盤地図情報数値標高モデル
+
+ダウンロードにはユーザー登録が必要
+
+10mメッシュ 10B
+
+<https://service.gsi.go.jp/kiban/>
+
+<https://service.gsi.go.jp/kiban/app/help/#digital_elevation_model>
+
+- FG-GML-5436-55-dem10b-20161001.xml
+-   FG-GML-5436-64-dem10b-20161001.xml
+-  FG-GML-5436-65-dem10b-20161001.xml
+-  FG-GML-5436-44-dem10b-20161001.xml
+-  FG-GML-5436-45-dem10b-20161001.xml
+-  FG-GML-5436-54-dem10b-20161001.xml
+
+```{r}
+data_files <- file.path("data",
+                        c("FG-GML-5436-44-dem10b-20161001.xml", 
+                          "FG-GML-5436-45-dem10b-20161001.xml", 
+                          "FG-GML-5436-54-dem10b-20161001.xml",
+                          "FG-GML-5436-55-dem10b-20161001.xml",
+                          "FG-GML-5436-64-dem10b-20161001.xml",
+                          "FG-GML-5436-65-dem10b-20161001.xml"))
+```
+
+
+読み込む関数を定義します。10mメッシュですが、これでは大きすぎるので、縦横1/10に間引きます。
+
+```{r}
+#| label: define-read_dem-function
+
+read_dem <- function(file_path, thin = 10) {
+  # XMLを読み込む
+  x <- xml2::read_xml(file_path, options = "HUGE")
+  # ネームスペース
+  ns <- xml2::xml_ns(x)
+  # 角の座標を返す関数
+  corner <- function(tag) {
+    xml2::xml_text(xml2::xml_find_first(x, paste0("//gml:", tag), ns)) |>
+      strsplit(" ") |> unlist() |> as.numeric()
+  }
+  lower <- corner("lowerCorner")  # 南西端(緯度, 経度)
+  upper <- corner("upperCorner")  # 北東端(緯度, 経度)
+  # 経度方向・緯度方向のセルの数
+  nc <- xml2::xml_text(xml2::xml_find_first(x, "//gml:high", ns)) |>
+    strsplit(" ") |> unlist() |> as.integer() + 1L
+  # 標高
+  elev <- xml2::xml_text(xml2::xml_find_first(x, "//gml:tupleList", ns)) |>
+    I() |> # 文字列をデータとしてread_csv()にわたす
+    readr::read_csv(col_names = c("type", "elev"), show_col_types = FALSE) |>
+    # 海は-9999
+    dplyr::mutate(elev = if_else(elev == -9999, NA_real_, elev)) |>
+    dplyr::pull(elev)
+  # 西から東、北から南の順に並んだ値を行列にする
+  m <- matrix(elev, nrow = nc[2], ncol = nc[1], byrow = TRUE)
+  keep_r <- seq(1, nc[2], by = thin)
+  keep_c <- seq(1, nc[1], by = thin)
+  m_thin <- m[keep_r, keep_c]
+  # 1セルの増分
+  dx <- (upper[2] - lower[2]) / nc[1]
+  dy <- (upper[1] - lower[1]) / nc[2]
+  # as.vector()は列優先なので、rowが先に変わるように並べる
+  grid <- expand.grid(row = keep_r - 1, col = keep_c - 1)
+
+  tibble(
+    lon = lower[2] + (grid$col + 0.5) * dx,
+    lat = upper[1] - (grid$row + 0.5) * dy,
+    elev = as.vector(m_thin)) |>
+    sf::st_as_sf(coords = c("lon", "lat"),
+                 crs = 4612) # JGD2000
+}
+
+a <- read_dem(data_files[1])
+str(a)
+```
+
+DEMデータを読み込みます。
+
+```{r}
+dem_list <- purrr::map(data_files, read_dem)
+```
+
+読み込んだデータをまとめます。
+
+```{r}
+dem_data <- dplyr::bind_rows(dem_list)
+```
+
+間引いた格子点は間隔が空いているので、線形補間で一定間隔の格子に変換してから描画します。欠測値(標高がないセル)は補間に使わず、描画もしません。
+
+```{r}
+#| label: plot-dem-tile
+
+dem_valid <- dem_data |>
+  dplyr::filter(!is.na(elev))
+xy <- sf::st_coordinates(dem_valid)
+
+# 補間先の格子(経度・緯度とも400×300点)
+xo <- seq(min(xy[, 1]), max(xy[, 1]), length.out = 400)
+yo <- seq(min(xy[, 2]), max(xy[, 2]), length.out = 300)
+fit <- akima::interp(x = xy[, 1], y = xy[, 2], z = dem_valid$elev,
+                     xo = xo, yo = yo, linear = TRUE, duplicate = "mean")
+
+dem_fine <- expand.grid(lon = fit$x, lat = fit$y) |>
+  dplyr::mutate(elev = as.vector(fit$z))
+
+ggplot(dem_fine, aes(x = lon, y = lat, fill = elev)) +
+  geom_raster() +
+  scale_fill_viridis_c(name = "標高(m)", na.value = "transparent") +
+  coord_fixed()
+```
