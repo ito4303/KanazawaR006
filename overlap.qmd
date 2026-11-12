@@ -1,50 +1,83 @@
 ---
 title: "いろいろなデータを地図にかさねる"
 author: "伊東宏樹"
-format: revealjs
 date: 2026-11-28
 lang: ja
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    code-copy: true
+embed-resources: true
+slide-number: true
 editor: visual
 ---
 
-## 内容
+## 今回の内容
+
+- 国土数値情報の利用
+
+- sfパッケージ
+
+- ggplotでの作図
+
+## パッケージの読み込み
 
 ```{r}
 #| label: setup
+#| echo: true
 
-library(kokudosuuchi)
-library(sf)
 library(tidyverse)
+library(sf)
+library(jpmesh)
 ```
 
-国土数値情報
+## 国土数値情報
 
-2026年の石川県の行政区域データ
+## 2026年の石川県の行政区域データ
+
+GeoJSONファイルを読み込みます。
+
+st_read()またはread_sf()関数でデータを読み込みます。
 
 ```{r}
-data_file <- file.path("data", "N03-20260101_17_GML.zip")
-d <- readKSJData(data_file, encoding = "UTF-8") |>
-  translateKSJData()
+#| label: data-N03
+#| echo: true
+
+data_file <- file.path("data", "N03-20260101_17_GML",
+                       "N03-20260101_17.geojson")
+d <- sf::st_read(data_file)
 ```
 
-plot
+## plot
+
+ggplotでgeom_sf()関数を使用します。
 
 ```{r}
-ggplot(d[[1]]) +
-  geom_sf()
+#| label: plot-N03
+#| echo: true
+
+ggplot(d) +
+  geom_sf() +
+  theme_void()
 ```
 
-将来人口
+## 将来人口のデータ
 
 ```{r}
+#| label: data-population
+#| echo: true
+
 data_file <- file.path("data", "1km_mesh_2024_17_GEOJSON",
                        "1km_mesh_2024_17.geojson")
 d_ppl <- st_read(data_file)
 ```
 
-2020年男女計総数人口
+## 2020年男女計総数人口
 
 ```{r}
+#| label: plot-population
+#| echo: true
+
 ggplot(d_ppl) +
   geom_sf(aes(fill = PTN_2020), color = NA) +
   scale_fill_viridis_c(name = "人口",
@@ -52,4 +85,112 @@ ggplot(d_ppl) +
                        breaks = c(10, 100, 1000, 5000)) +
   labs(title = "2020年1kmメッシュごと人口") +
   theme_void()
+```
+
+## バス停位置のデータ
+
+```{r}
+#| label: data-bus-stop
+#| echo: true
+
+data_file <- file.path("data", "P11-22_17_SHP",
+                       "P11-22_17.geojson")
+d_bus <- st_read(data_file)
+```
+
+```{r}
+#| cache: true
+
+d_bus_mesh <- d_bus |>
+  dplyr::mutate(MESH_ID = coords_to_mesh(geometry = geometry)) |>
+  dplyr::group_by(MESH_ID) |>
+  dplyr::tally() |>
+  dplyr::select(MESH_ID, n)
+```
+
+人口データとバス停データを結合し、バス停のないところはn=0とします。
+
+```{r}
+d_ppl_bus <- d_ppl |>
+  sf::st_join(d_bus_mesh) |>
+  tidyr::replace_na(list(n = 0))
+```
+
+```{r}
+#| label: plot-population-vs-busstop
+
+ggplot(d_ppl_bus, aes(x = PTN_2020, y = n)) +
+  geom_point(alpha = 0.6) +
+  scale_x_continuous(transform = "log10",
+                     breaks = c(1, 5, 10, 50, 100, 500, 1000, 5000, 10000),
+                     minor_breaks = NULL)
+```
+
+メッシュの人口が5000人以上いるけれども、バス停数が10個以下のところを抽出します。
+
+```{r}
+d_bus10 <- d_ppl_bus |>
+  dplyr::filter(PTN_2020 >= 5000, n <= 10)
+d_bus10 |>
+  dplyr::pull(SHICODE) |>
+  table()
+```
+
+17201は金沢市、17210, 17212はそれぞれ、白山市、野々市市。
+
+```{r}
+d_ppl |>
+  ggplot() +
+  geom_sf(aes(fill = PTN_2020), color = NA) +
+  scale_fill_viridis_c(name = "人口",
+                       transform = "log1p",
+                       breaks = c(10, 100, 1000, 5000)) +
+  geom_sf(data = d_bus10, color = "red") +
+  labs(title = "2020年1kmメッシュごと人口") +
+  theme_void()
+
+```
+
+## 行政区域
+
+```{r}
+#| label: data-gyousei
+
+data_file <- file.path("data", "N03-20260101_17_GML",
+                       "N03-20260101_17.geojson")
+d_gys <- sf::st_read(data_file)
+```
+
+金沢市・白山市・野々市市を抽出
+
+北緯36.45より北だけ
+
+```{r}
+#| warning: false
+
+d_gys2 <- d_gys |>
+  dplyr::filter(N03_004 %in% c("金沢市", "白山市", "野々市市"))
+bb <- st_bbox(d_gys2)
+d_gys2 |>
+  st_crop(xmin = bb[["xmin"]], xmax = bb[["xmax"]],
+          ymin = 36.45, ymax = bb[["ymax"]]) |>
+  ggplot() +
+  geom_sf() +
+  geom_sf(data = d_bus10, aes(fill = n), alpha = 0.5)
+```
+
+```{r}
+library(leaflet)
+
+pal <- colorNumeric("YlOrRd", domain = d_ppl_bus$n)
+d_ppl_bus <- sf::st_transform(d_ppl_bus, 4326) # WGS84
+bus_map <- leaflet(data = d_ppl_bus) |>
+  addTiles() |>
+  setView(lng = 136.65, lat = 36.55, zoom = 11) |>
+  addPolygons(color = ~pal(n), fillColor = ~pal(n),
+              opacity = 0.2, fillOpacity = 0.7) |>
+  addLegend(pal = pal, values = d_ppl_bus$n,
+            title = "Number of bustops",
+            position = "bottomright")
+bus_map
 ```

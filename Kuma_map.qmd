@@ -3,7 +3,10 @@ title: "Rでクマ出没地図を作成しよう"
 author: "伊東宏樹"
 date: 2026-11-28
 lang: ja
-format: html
+format:
+  html:
+    code-copy: true
+embed-resources: true
 editor: visual
 ---
 
@@ -340,6 +343,8 @@ data_bind |>
 データをグラフで確認します。
 
 ### 年別の出没情報件数
+
+フォントにはNoto Sans JPを使用しています。適宜このみのフォントに変更してください。
 
 ```{r}
 #| label: plot-yearly-occurrence

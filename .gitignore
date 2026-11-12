@@ -54,10 +54,12 @@ rsconnect/
 
 # Data
 data/
+images/
 
 # Output files and intermediate files
 *.html
 *_files/
+output/
 
 # QGIS files
 *.qgz

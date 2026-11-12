@@ -1,138 +1,135 @@
 ---
 title: "ggcubeで3D地図"
 author: "伊東宏樹"
-format: revealjs
+date: 2026-11-28
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    code-copy: true
+embed-resources: true
+slide-number: true
 editor: visual
 ---
 
-## やること
+## 今回の内容
 
-3D地図を描画
+::: incremental
+- 3D地図を描画
+
+- アニメーションにしてぐるぐるまわす
+
+- ggcubeパッケージを利用
+:::
+
+## パッケージ読み込み
 
 ```{r}
 #| label: setup
+#| echo: true
 
 library(tidyverse)
-library(sf)
-library(xml2)
-library(akima)
-library(geometry)
+library(terra)
 library(ggplot2)
 library(ggcube)
 ```
 
-データ
+## データ
 
-国土地理院基盤地図情報数値標高モデル
+国土地理院の[基盤地図情報](https://service.gsi.go.jp/kiban/)数値標高モデルを使用します（ダウンロードにはユーザー登録が必要）。
 
-ダウンロードにはユーザー登録が必要
+10mメッシュ (10B) の以下のファイルをダウンロードしました。
 
-10mメッシュ 10B
+- ::: {style="font-size: 75%;"}
+  - FG-GML-5436-55-dem10b-20161001.xml
 
-<https://service.gsi.go.jp/kiban/>
+  - FG-GML-5436-64-dem10b-20161001.xml
 
-<https://service.gsi.go.jp/kiban/app/help/#digital_elevation_model>
+  - FG-GML-5436-65-dem10b-20161001.xml
 
-- FG-GML-5436-55-dem10b-20161001.xml
--   FG-GML-5436-64-dem10b-20161001.xml
--  FG-GML-5436-65-dem10b-20161001.xml
--  FG-GML-5436-44-dem10b-20161001.xml
--  FG-GML-5436-45-dem10b-20161001.xml
--  FG-GML-5436-54-dem10b-20161001.xml
+  - FG-GML-5436-44-dem10b-20161001.xml
 
-```{r}
-data_files <- file.path("data",
-                        c("FG-GML-5436-44-dem10b-20161001.xml", 
-                          "FG-GML-5436-45-dem10b-20161001.xml", 
-                          "FG-GML-5436-54-dem10b-20161001.xml",
-                          "FG-GML-5436-55-dem10b-20161001.xml",
-                          "FG-GML-5436-64-dem10b-20161001.xml",
-                          "FG-GML-5436-65-dem10b-20161001.xml"))
-```
+  - FG-GML-5436-45-dem10b-20161001.xml
 
+  - FG-GML-5436-54-dem10b-20161001.xml
+  :::
 
-読み込む関数を定義します。10mメッシュですが、これでは大きすぎるので、縦横1/10に間引きます。
+## 前処理
+
+ダウンロードしたDEMデータを、QGISで結合してGeoTIFF出力しておきました。
+
+![](images/qgis.png){width="640"}
+
+## データの読み込み
+
+terraパッケージのrast()関数でGeoTIFFを読み込みます。
 
 ```{r}
-#| label: define-read_dem-function
+#| label: read_geotiff
+#| echo: true
 
-read_dem <- function(file_path, thin = 10) {
-  # XMLを読み込む
-  x <- xml2::read_xml(file_path, options = "HUGE")
-  # ネームスペース
-  ns <- xml2::xml_ns(x)
-  # 角の座標を返す関数
-  corner <- function(tag) {
-    xml2::xml_text(xml2::xml_find_first(x, paste0("//gml:", tag), ns)) |>
-      strsplit(" ") |> unlist() |> as.numeric()
-  }
-  lower <- corner("lowerCorner")  # 南西端(緯度, 経度)
-  upper <- corner("upperCorner")  # 北東端(緯度, 経度)
-  # 経度方向・緯度方向のセルの数
-  nc <- xml2::xml_text(xml2::xml_find_first(x, "//gml:high", ns)) |>
-    strsplit(" ") |> unlist() |> as.integer() + 1L
-  # 標高
-  elev <- xml2::xml_text(xml2::xml_find_first(x, "//gml:tupleList", ns)) |>
-    I() |> # 文字列をデータとしてread_csv()にわたす
-    readr::read_csv(col_names = c("type", "elev"), show_col_types = FALSE) |>
-    # 海は-9999
-    dplyr::mutate(elev = if_else(elev == -9999, NA_real_, elev)) |>
-    dplyr::pull(elev)
-  # 西から東、北から南の順に並んだ値を行列にする
-  m <- matrix(elev, nrow = nc[2], ncol = nc[1], byrow = TRUE)
-  keep_r <- seq(1, nc[2], by = thin)
-  keep_c <- seq(1, nc[1], by = thin)
-  m_thin <- m[keep_r, keep_c]
-  # 1セルの増分
-  dx <- (upper[2] - lower[2]) / nc[1]
-  dy <- (upper[1] - lower[1]) / nc[2]
-  # as.vector()は列優先なので、rowが先に変わるように並べる
-  grid <- expand.grid(row = keep_r - 1, col = keep_c - 1)
-
-  tibble(
-    lon = lower[2] + (grid$col + 0.5) * dx,
-    lat = upper[1] - (grid$row + 0.5) * dy,
-    elev = as.vector(m_thin)) |>
-    sf::st_as_sf(coords = c("lon", "lat"),
-                 crs = 4612) # JGD2000
-}
-
-a <- read_dem(data_files[1])
-str(a)
+geotiff_file <- file.path("data", "Tedorigawa.tiff")
+dem <- terra::rast(geotiff_file)
 ```
 
-DEMデータを読み込みます。
+## データの処理
+
+そのままでは、データ量が多すぎて処理に時間がかかるので、データを間引きます。`aggregate()`関数で、10ピクセルごとの平均でまとめます。その後、`as.data.frame()`関数でデータフレームに変換します。
+
+また、`elev_max`に標高の最大値（100m単位で切り上げ）を入れておきます。
 
 ```{r}
-dem_list <- purrr::map(data_files, read_dem)
+#| label: process_dem
+#| echo: true
+
+dem_df <- dem |>
+  terra::aggregate(fact = 10, fun = "mean") |>
+  terra::as.data.frame(xy = TRUE) |>
+  dplyr::rename(elev = 3)
+elev_max <- ceiling(max(dem_df$elev) / 100) * 100
 ```
 
-読み込んだデータをまとめます。
+## 3D描画
+
+`geom_surface_3d()`関数で3次元プロット
 
 ```{r}
-dem_data <- dplyr::bind_rows(dem_list)
+#| label: plot-3d-dem
+#| echo: true
+#| cache: true
+#| output-location: slide
+
+map_3d <- ggplot(dem_df, aes(x = x, y = y, z = elev)) +
+  geom_surface_3d(aes(fill = elev)) +
+  scale_fill_gradientn(
+    colors = c("blue", "#336600", "#78AB46", "#C8B560",
+               "#A0785A", "#8B5A2B", "#D2B48C", "#FFFFFF"),
+    values  = c(0, 0.001, 0.01, 0.05, 0.1, 0.5, 0.75, 1),
+    limits  = c(0, elev_max),
+    name = "標高 (m)",
+    na.value = NA
+  ) +
+  labs(x = "経度", y = "緯度", z = "標高 (m)") +
+  coord_3d(pitch = 0, roll = -60, yaw = 190,
+           ratio = c(1, 1, 0.2)) +
+  theme_minimal(base_family = "Noto Sans JP",
+                base_size = 10)
+map_3d
 ```
 
-間引いた格子点は間隔が空いているので、線形補間で一定間隔の格子に変換してから描画します。欠測値(標高がないセル)は補間に使わず、描画もしません。
+## 3Dアニメーションの作成
+
+`animate_3d()`関数でアニメーションを作成します（時間がかかります）。
 
 ```{r}
-#| label: plot-dem-tile
+#| label: plot-3d-animation
+#| echo: true
+#| cache: true
 
-dem_valid <- dem_data |>
-  dplyr::filter(!is.na(elev))
-xy <- sf::st_coordinates(dem_valid)
-
-# 補間先の格子(経度・緯度とも400×300点)
-xo <- seq(min(xy[, 1]), max(xy[, 1]), length.out = 400)
-yo <- seq(min(xy[, 2]), max(xy[, 2]), length.out = 300)
-fit <- akima::interp(x = xy[, 1], y = xy[, 2], z = dem_valid$elev,
-                     xo = xo, yo = yo, linear = TRUE, duplicate = "mean")
-
-dem_fine <- expand.grid(lon = fit$x, lat = fit$y) |>
-  dplyr::mutate(elev = as.vector(fit$z))
-
-ggplot(dem_fine, aes(x = lon, y = lat, fill = elev)) +
-  geom_raster() +
-  scale_fill_viridis_c(name = "標高(m)", na.value = "transparent") +
-  coord_fixed()
+anim_map <- animate_3d(map_3d,
+                       yaw = c(0, 360), width = 640, height = 640)
+anim_save_3d(anim_map, file.path("output", "map-animation.gif"))
 ```
+
+## できあがり
+
+![](output/map-animation.gif){fig-align="center"}
