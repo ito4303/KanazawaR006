@@ -14,183 +14,368 @@ editor: visual
 
 ## 今回の内容
 
+バス路線の縮小
+
+人口が多いけれどもバス停が少ない地域を抽出してみる
+
 - 国土数値情報の利用
-
 - sfパッケージ
-
 - ggplotでの作図
-
-## パッケージの読み込み
 
 ```{r}
 #| label: setup
-#| echo: true
+#| output: false
 
 library(tidyverse)
 library(sf)
 library(jpmesh)
+library(leaflet)
+
+jp_font <- "Noto Sans JP"
 ```
 
 ## 国土数値情報
 
+- <https://nlftp.mlit.go.jp/ksj/>
+
+- 国土交通省が提供している。
+
+- 国土、政策区域、地域、交通、各種統計の5分類
+
+- 形式: シェープファイル, XML, GeoJSON
+
+  - RからはGeoJSONがおすすめ
+
 ## 2026年の石川県の行政区域データ
 
-GeoJSONファイルを読み込みます。
+- 国土数値情報から、2026年の石川県の行政区域データをダウンロードしておきます。
 
-st_read()またはread_sf()関数でデータを読み込みます。
+- GeoJSONファイルを読み込みます。
+
+  - `st_read()`または`read_sf()`関数でデータを読み込みます。
 
 ```{r}
 #| label: data-N03
 #| echo: true
+#| output: false
 
 data_file <- file.path("data", "N03-20260101_17_GML",
                        "N03-20260101_17.geojson")
-d <- sf::st_read(data_file)
+pref17 <- sf::st_read(data_file)
+# CRSはEPSG:6668 (JGD2011)
 ```
 
-## plot
+## 行政区域をggplotで描画
 
-ggplotでgeom_sf()関数を使用します。
+ggplotで`geom_sf()`を関数を使用します。
 
 ```{r}
 #| label: plot-N03
 #| echo: true
 
-ggplot(d) +
+ggplot(pref17) +
   geom_sf() +
   theme_void()
 ```
 
-## 将来人口のデータ
+## 石川県の領域の3次（1km）メッシュ
+
+```{r}
+#| label: generate-1km-mesh
+#| cache: true
+
+pref17_all <- pref17 |>
+  sf::st_union()
+
+# 石川県の領域
+bb <- sf::st_bbox(pref17_all)
+
+# 3次メッシュの大きさ(経度45秒=1/80度, 緯度30秒=1/120度)に揃えた格子
+grid <- sf::st_make_grid(
+  sf::st_as_sfc(bb),
+  cellsize = c(1 / 80, 1 / 120),
+  offset = c(floor(bb["xmin"] * 80) / 80, floor(bb["ymin"] * 120) / 120))
+grid <- grid[lengths(sf::st_intersects(grid, pref17_all)) > 0]
+
+# セル中心から3次メッシュコード(8桁)を計算
+cen <- sf::st_coordinates(sf::st_centroid(grid))
+mesh17 <- sf::st_sf(
+  MESH_ID = coords_to_mesh(cen[, 1], cen[, 2], to_mesh_size = 1) |>
+              as.character(),  # 文字列型に
+  geometry = grid)
+
+ggplot(mesh17) +
+  geom_sf() +
+  theme_void()
+```
+
+## 人口のデータ
+
+石川県の1km（3次メッシュ）ごとの2020年時点での将来人口推計
+
+<https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-mesh1000r6.html>
 
 ```{r}
 #| label: data-population
 #| echo: true
+#| output: false
 
 data_file <- file.path("data", "1km_mesh_2024_17_GEOJSON",
                        "1km_mesh_2024_17.geojson")
 d_ppl <- st_read(data_file)
+# CRSはEPSG:6668 (JGD2011)
 ```
 
-## 2020年男女計総数人口
+## 2020年の石川県の人口分布
 
 ```{r}
-#| label: plot-population
-#| echo: true
+#| label: plot-population-2020
+#| echo: false
 
+max_popl <- 10000
 ggplot(d_ppl) +
   geom_sf(aes(fill = PTN_2020), color = NA) +
   scale_fill_viridis_c(name = "人口",
                        transform = "log1p",
-                       breaks = c(10, 100, 1000, 5000)) +
-  labs(title = "2020年1kmメッシュごと人口") +
-  theme_void()
+                       limits = c(1, max_popl),
+                       breaks = c(1, 10, 100, 1000, 10000)) +
+  labs(title = "2020年の1kmメッシュごと人口") +
+  theme_void(base_family = jp_font)
+```
+
+## メッシュデータと結合
+
+```{r}
+d_ppl_mesh <- mesh17 |>
+  dplyr::left_join(st_drop_geometry(d_ppl), by = "MESH_ID")
+```
+
+## プロット
+
+人口が0のところは空白に
+
+```{r}
+#| label: plot-population-2020-2
+#| echo: false
+
+ggplot(d_ppl_mesh) +
+  geom_sf(aes(fill = PTN_2020), color = "gray") +
+  scale_fill_viridis_c(name = "人口",
+                       transform = "log1p",
+                       limits = c(1, max_popl),
+                       breaks = c(1, 10, 100, 1000, 10000),
+                       na.value = "white") +
+  labs(title = "2020年の1kmメッシュごと人口") +
+  theme_void(base_family = jp_font)
+```
+
+## 2050年の石川県の推計人口分布
+
+人口推計値が0のところは空白に
+
+<!-- 推計時点では2024年の能登半島地震の影響は考慮されていない -->
+
+```{r}
+#| label: plot-population
+#| echo: false
+
+d_ppl_mesh |>
+  # 推計人口が0のところをNAに
+  dplyr::mutate(PT00_2050 = dplyr::na_if(PT00_2050, 0)) |>
+  ggplot() +
+  geom_sf(aes(fill = PT00_2050), color = "gray") +
+  scale_fill_viridis_c(name = "人口",
+                       transform = "log1p",
+                       limits = c(1, max_popl),
+                       breaks = c(1, 10, 100, 1000, 10000),
+                       na.value = "white") +
+  labs(title = "2050年の1kmメッシュごと推計人口") +
+  theme_void(base_family = jp_font)
 ```
 
 ## バス停位置のデータ
 
+バス停留所データ2022年版
+
+<https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-P11-2022.html>
+
 ```{r}
 #| label: data-bus-stop
 #| echo: true
+#| output: false
 
 data_file <- file.path("data", "P11-22_17_SHP",
                        "P11-22_17.geojson")
 d_bus <- st_read(data_file)
 ```
 
+## 1kmメッシュごとのバス停数を計算
+
 ```{r}
+#| label: calc-num-bus_stop-per-1km_mesh
 #| cache: true
+#| echo: true
 
 d_bus_mesh <- d_bus |>
   dplyr::mutate(MESH_ID = coords_to_mesh(geometry = geometry)) |>
+  st_drop_geometry() |>
   dplyr::group_by(MESH_ID) |>
   dplyr::tally() |>
-  dplyr::select(MESH_ID, n)
+  dplyr::select(MESH_ID, n) |>
+  dplyr::mutate(MESH_ID = as.character(MESH_ID))
 ```
 
-人口データとバス停データを結合し、バス停のないところはn=0とします。
+人口データとバス停データを結合します。
+
+また、PTN_2020, PT00_20250, n（バス停数）がNAのところは0にします。
 
 ```{r}
-d_ppl_bus <- d_ppl |>
-  sf::st_join(d_bus_mesh) |>
-  tidyr::replace_na(list(n = 0))
+#| label: combine-population-and-num-bus_stop
+
+d_ppl_bus <- d_ppl_mesh |>
+  dplyr::left_join(d_bus_mesh, by = "MESH_ID") |>
+  tidyr::replace_na(list(PTN_2020 = 0, PT00_20250 = 0, n = 0))
 ```
+
+## leaflet地図と重ねる
+
+```{r}
+#| label: plot-bus-stop-num-leaflet
+#| echo: false
+
+pal <- colorNumeric("YlOrRd", domain = d_ppl_bus$n,
+                    na.color = "white")
+d_ppl_bus <- sf::st_transform(d_ppl_bus, 4326) # WGS84
+bus_map <- leaflet(data = d_ppl_bus) |>
+  addTiles() |>
+  setView(lng = 136.65, lat = 36.75, zoom = 8) |>
+  # バス停が0のメッシュは塗りつぶしを透明にする
+  addPolygons(color = ~pal(n), fillColor = ~pal(n),
+              opacity = 0.2, fillOpacity = ~if_else(n == 0, 0, 0.7)) |>
+  addLegend(pal = pal, values = d_ppl_bus$n,
+            title = "バス停数",
+            position = "bottomright")
+bus_map
+```
+
+## 人口とバス停数との関係
 
 ```{r}
 #| label: plot-population-vs-busstop
 
 ggplot(d_ppl_bus, aes(x = PTN_2020, y = n)) +
   geom_point(alpha = 0.6) +
-  scale_x_continuous(transform = "log10",
-                     breaks = c(1, 5, 10, 50, 100, 500, 1000, 5000, 10000),
-                     minor_breaks = NULL)
+  scale_x_continuous(transform = "log1p",
+                     breaks = c(0, 1, 5, 10, 50, 100, 500,
+                                1000, 5000, 10000),
+                     minor_breaks = NULL) +
+  labs(title = "1kmメッシュごとの人口とバス停数との関係",
+       x = "人口", y = "バス停数") +
+  theme_bw(base_family = jp_font)
 ```
 
-メッシュの人口が5000人以上いるけれども、バス停数が10個以下のところを抽出します。
+## 人口が多けれどもバス停がない地域
+
+メッシュの人口が1000人以上いるけれども、バス停がないところを抽出します。
 
 ```{r}
 d_bus10 <- d_ppl_bus |>
-  dplyr::filter(PTN_2020 >= 5000, n <= 10)
+  dplyr::filter(PTN_2020 >= 1000, n == 0)
 d_bus10 |>
   dplyr::pull(SHICODE) |>
   table()
 ```
 
-17201は金沢市、17210, 17212はそれぞれ、白山市、野々市市。
+市町村コードの17201は金沢市、17210, 17212はそれぞれ、白山市、野々市市です。
+
+## 地図に表示
+
+赤色で表示します
 
 ```{r}
-d_ppl |>
+d_ppl_mesh |>
   ggplot() +
-  geom_sf(aes(fill = PTN_2020), color = NA) +
+  geom_sf(aes(fill = PTN_2020), color = "gray", alpha = 0.5) +
   scale_fill_viridis_c(name = "人口",
                        transform = "log1p",
-                       breaks = c(10, 100, 1000, 5000)) +
+                       limits = c(1, 10000),
+                       breaks = c(1, 10, 100, 1000, 10000),
+                       na.value = "white") +
   geom_sf(data = d_bus10, color = "red") +
-  labs(title = "2020年1kmメッシュごと人口") +
-  theme_void()
-
+  labs(title = "人口が多いがバス停がないメッシュ") +
+  theme_void(base_family = jp_font)
 ```
 
-## 行政区域
+## 行政区域とかさねる
+
+内灘町・かほく市を抽出
 
 ```{r}
-#| label: data-gyousei
-
-data_file <- file.path("data", "N03-20260101_17_GML",
-                       "N03-20260101_17.geojson")
-d_gys <- sf::st_read(data_file)
-```
-
-金沢市・白山市・野々市市を抽出
-
-北緯36.45より北だけ
-
-```{r}
+#| label: num-bus_stop-over-gyousei
 #| warning: false
 
-d_gys2 <- d_gys |>
-  dplyr::filter(N03_004 %in% c("金沢市", "白山市", "野々市市"))
-bb <- st_bbox(d_gys2)
-d_gys2 |>
-  st_crop(xmin = bb[["xmin"]], xmax = bb[["xmax"]],
-          ymin = 36.45, ymax = bb[["ymax"]]) |>
+kahoku <- pref17 |>
+  dplyr::filter(N03_004 %in% c("内灘町", "かほく市", "津幡町", "金沢市",
+                               "白山市", "能美市", "小松市", "加賀市"))
+bb <- st_bbox(kahoku)
+kahoku |>
   ggplot() +
-  geom_sf() +
-  geom_sf(data = d_bus10, aes(fill = n), alpha = 0.5)
+  geom_sf(crs = st_crs(6674)) +
+  geom_sf(data = d_bus10, aes(fill = PTN_2020), alpha = 0.5) +
+  labs(title = "人口が多いがバス停がないメッシュ",
+       fill = "人口")
 ```
 
-```{r}
-library(leaflet)
+## leafletと重ねる
 
-pal <- colorNumeric("YlOrRd", domain = d_ppl_bus$n)
-d_ppl_bus <- sf::st_transform(d_ppl_bus, 4326) # WGS84
-bus_map <- leaflet(data = d_ppl_bus) |>
-  addTiles() |>
-  setView(lng = 136.65, lat = 36.55, zoom = 11) |>
-  addPolygons(color = ~pal(n), fillColor = ~pal(n),
+```{r}
+
+pal <- colorNumeric("YlOrRd", domain = d_bus10$PTN_2020,
+                    na.color = "white")
+
+leaflet(data = d_bus10) |>
+  addTiles() |>  # デフォルトのOpenStreetMap
+  setView(lng = 136.7, lat = 36.75, zoom = 12) |>
+  # バス停が0のメッシュは塗りつぶしを透明にする
+  addPolygons(color = ~pal(PTN_2020), fillColor = ~pal(PTN_2020),
               opacity = 0.2, fillOpacity = 0.7) |>
-  addLegend(pal = pal, values = d_ppl_bus$n,
-            title = "Number of bustops",
+  addLegend(pal = pal, values = d_bus10$PTN_2020,
+            title = "人口",
             position = "bottomright")
-bus_map
+```
+
+## バス停を追加
+
+```{r}
+leaflet(data = d_bus10) |>
+  addTiles() |>  # デフォルトのOpenStreetMap
+  setView(lng = 136.7, lat = 36.75, zoom = 12) |>
+  # バス停が0のメッシュは塗りつぶしを透明にする
+  addPolygons(color = ~pal(PTN_2020), fillColor = ~pal(PTN_2020),
+              opacity = 0.2, fillOpacity = 0.7) |>
+  addLegend(pal = pal, values = d_bus10$PTN_2020,
+            title = "人口",
+            position = "bottomright") |>
+  addCircleMarkers(data = st_transform(d_bus, crs = 4326),
+                   radius = 4, weight = 3)
+```
+
+## 人口は0だが、バス停はあるところ
+
+```{r}
+d_bus_n0 <- d_ppl_bus |>
+  dplyr::filter(PTN_2020 == 0, n > 0)
+d_bus_n0 |>
+  dplyr::pull(SHICODE) |>
+  table()
+```
+
+plot
+
+```{r}
+leaflet(data = d_bus_n0) |>
+  addTiles() |>
+  addCircleMarkers(data = st_transform(d_bus, crs = 4326),
+                   radius = 3, weight = 2, opacity = 0.2) |>
+  addPolygons(color = "red")
 ```

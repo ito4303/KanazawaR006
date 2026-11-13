@@ -344,11 +344,12 @@ data_bind |>
 
 ### 年別の出没情報件数
 
-フォントにはNoto Sans JPを使用しています。適宜このみのフォントに変更してください。
+フォントにはNoto Sans JPを使用しています。適宜お好みのフォントに変更してください。
 
 ```{r}
 #| label: plot-yearly-occurrence
 
+jp_font <- "Noto Sans JP"
 data_bind |>
   dplyr::group_by(Year) |>
   dplyr::tally() |>
@@ -357,7 +358,7 @@ data_bind |>
   labs(title = "年ごとの出没情報件数",
        x = "年",
        y = "件数") +
-  theme_gray(base_family = "Noto Sans JP")
+  theme_gray(base_family = jp_font)
 ```
 
 ### 月別の出没情報件数
@@ -374,7 +375,7 @@ data_bind |>
   labs(title = "月ごとの出没情報件数",
        x = "月",
        y = "件数") +
-  theme_gray(base_family = "Noto Sans JP")
+  theme_gray(base_family = jp_font)
 ```
 
 ### 時間帯別の出没情報件数
@@ -391,7 +392,7 @@ data_bind |>
   labs(title = "時間帯ごとの出没情報件数",
        x = "時間帯",
        y = "件数") +
-  theme_gray(base_family = "Noto Sans JP")
+  theme_gray(base_family = jp_font)
 ```
 
 ## 地図上に表示
