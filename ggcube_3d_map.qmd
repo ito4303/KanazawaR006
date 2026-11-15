@@ -6,8 +6,8 @@ format:
   revealjs:
     theme: [default, custom.scss]
     code-copy: true
-embed-resources: true
-slide-number: true
+    embed-resources: true
+    slide-number: true
 editor: visual
 ---
 
@@ -21,16 +21,24 @@ editor: visual
 - ggcubeパッケージを利用
 :::
 
-## パッケージ読み込み
-
 ```{r}
 #| label: setup
-#| echo: true
+#| echo: false
 
 library(tidyverse)
 library(terra)
 library(ggplot2)
 library(ggcube)
+
+# フォント
+jp_font <- "Noto Sans JP"
+
+# ディレクトリ
+data_dir <- "data"
+output_dir <- "output"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
 ```
 
 ## データ
@@ -55,27 +63,27 @@ library(ggcube)
 
 ## 前処理
 
-ダウンロードしたDEMデータを、QGISで結合してGeoTIFF出力しておきました。
+ダウンロードしたDEMデータを、QGISで結合してGeoTIFF出力しておきました。ファイル名は`Tedorigawa.tiff`です。
 
 ![](images/qgis.png){width="640"}
 
 ## データの読み込み
 
-terraパッケージのrast()関数でGeoTIFFを読み込みます。
+terraパッケージのrast()関数でGeoTIFFを読み込んで、概要を表示します。
 
 ```{r}
 #| label: read_geotiff
 #| echo: true
 
-geotiff_file <- file.path("data", "Tedorigawa.tiff")
-dem <- terra::rast(geotiff_file)
+geotiff_file <- "Tedorigawa.tiff"
+(dem <- terra::rast(file.path(data_dir, geotiff_file)))
 ```
 
 ## データの処理
 
-そのままでは、データ量が多すぎて処理に時間がかかるので、データを間引きます。`aggregate()`関数で、10ピクセルごとの平均でまとめます。その後、`as.data.frame()`関数でデータフレームに変換します。
+`aggregate()`関数で、10ピクセルごとの平均でまとめ、`as.data.frame()`関数でデータフレームに変換します。
 
-また、`elev_max`に標高の最大値（100m単位で切り上げ）を入れておきます。
+標高の列名を`elev`にかえます。また、`elev_max`に標高の最大値（100m単位で切り上げ）を入れておきます。
 
 ```{r}
 #| label: process_dem
@@ -84,8 +92,8 @@ dem <- terra::rast(geotiff_file)
 dem_df <- dem |>
   terra::aggregate(fact = 10, fun = "mean") |>
   terra::as.data.frame(xy = TRUE) |>
-  dplyr::rename(elev = 3)
-elev_max <- ceiling(max(dem_df$elev) / 100) * 100
+  dplyr::rename(elev = names(dem))
+elev_max <- ceiling(max(dem_df$elev, na.rm = TRUE) / 100) * 100
 ```
 
 ## 3D描画
@@ -105,14 +113,13 @@ map_3d <- ggplot(dem_df, aes(x = x, y = y, z = elev)) +
                "#A0785A", "#8B5A2B", "#D2B48C", "#FFFFFF"),
     values  = c(0, 0.001, 0.01, 0.05, 0.1, 0.5, 0.75, 1),
     limits  = c(0, elev_max),
-    name = "標高 (m)",
-    na.value = NA
+    name = "標高 (m)"
   ) +
   labs(x = "経度", y = "緯度", z = "標高 (m)") +
   coord_3d(pitch = 0, roll = -60, yaw = 190,
+           # 標高を強調して表示, xy軸の単位は度、z軸の単位はm
            ratio = c(1, 1, 0.2)) +
-  theme_minimal(base_family = "Noto Sans JP",
-                base_size = 10)
+  theme_minimal(base_family = jp_font, base_size = 10)
 map_3d
 ```
 
@@ -126,8 +133,10 @@ map_3d
 #| cache: true
 
 anim_map <- animate_3d(map_3d,
-                       yaw = c(0, 360), width = 640, height = 640)
-anim_save_3d(anim_map, file.path("output", "map-animation.gif"))
+                       yaw = c(0, 360),
+                       width = 640, height = 640)
+anim_save_3d(anim_map,
+             file.path(output_dir, "map-animation.gif"))
 ```
 
 ## できあがり

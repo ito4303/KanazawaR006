@@ -6,7 +6,7 @@ lang: ja
 format:
   html:
     code-copy: true
-embed-resources: true
+    embed-resources: true
 editor: visual
 ---
 
@@ -18,11 +18,15 @@ editor: visual
 
 tidyverseパッケージを読み込みます。また、地図表示のためleafletパッケージを使用します。
 
+グラフのフォントにはNoto Sans JPを使用します。適宜お好みのフォントに変更してください。
+
 ```{r}
 #| label: setup
 
 library(tidyverse)
 library(leaflet)
+
+jp_font <- "Noto Sans JP"
 ```
 
 ## データ
@@ -63,12 +67,14 @@ data_files <- c(
 
 時刻は、分は無視して、時単位の数値データとしました（最初の数値だけ見る）。時刻が「17時30分～19時頃」のように時間帯で記されている場合は、始点の時刻としました。
 
+`show_col_types = FALSE`と指定して、`read_csv()`関数の列型の自動判定のメッセージを抑制しています。
+
 ```{r}
 #| label: define-read-function-2025
 
 # 2025年のデータを読み込む
 read_data_2025 <- function(file) {
-  d <- read_csv(file) |>
+  d <- read_csv(file, show_col_types = FALSE) |>
     dplyr::mutate(ID = str_c("2025-", as.character(`_id`)),
                   Year = 2025,
                   Date = ymd(`出没日`),
@@ -78,7 +84,7 @@ read_data_2025 <- function(file) {
                   Hour = str_extract(Time, "\\d+") |> as.numeric(),
                   # 頭数: 正規化のうえ数値を抜きだして、数値型にします
                   Num = stringi::stri_trans_nfkc(`頭数`) |>
-                    str_extract("\\d") |>
+                    str_extract("\\d+") |>
                     as.numeric()) |>
     dplyr::rename(Latitude = `緯度`,
                   Longitude = `経度`,
@@ -143,10 +149,27 @@ read_data_2019 <- function(file) {
       Hour = str_extract(Time, "\\d+") |> as.numeric(),
       # 頭数: 正規化のうえ数値を抜きだして、数値型にします
       Num = stringi::stri_trans_nfkc(`頭数`) |>
-            str_extract("\\d") |>
+            str_extract("\\d+") |>
             as.numeric(),
       # ID: 年を先頭につけます
-      ID = sprintf("%d-%s", Year, as.character(`ID`))) |>
+      ID = sprintf("%d-%s", Year, as.character(`ID`)))
+
+  # `出没年` と `出没日` の年に矛盾がないかチェック
+  # 元号表記の日付は元号の年から、それ以外は変換後の日付から年を求める
+  bad <- d |>
+    dplyr::mutate(
+      Year_date = if_else(
+        str_detect(`出没日`, "^R[1-9]"),
+        as.numeric(str_extract(`出没日`, "(?<=^R)[1-9]")) + 2018,
+        year(Date))) |>
+    dplyr::filter(!is.na(Year_date), Year_date != Year)
+  if (nrow(bad) > 0) {
+    stop(sprintf("%s: `出没年`と`出没日`の年が矛盾する行が %d 件あります (ID: %s)",
+                 file, nrow(bad),
+                 paste(head(bad$ID, 5), collapse = ", ")))
+  }
+
+  d <- d |>
     dplyr::rename(Latitude = `緯度`,
                   Longitude = `経度`,
                   City = `市町名`,
@@ -265,7 +288,9 @@ data_bind |>
 nrow(dplyr::distinct(data_bind, ID)) - nrow(dplyr::distinct(data_bind))
 ```
 
-結果は`0`ではなく、IDが同じで、内容が異なるデータがあることをしめしています。ただ、確認すると表記揺れなどでしたので、このまま続行します。
+しかし、結果は`0`ではありませんでした。これは、IDが同じで、内容が異なるデータがあることをしめしています。
+
+ただ、確認すると表記揺れなどでしたので、このまま続行します。
 
 ```{r}
 #| label: remove-duplicates
@@ -344,12 +369,9 @@ data_bind |>
 
 ### 年別の出没情報件数
 
-フォントにはNoto Sans JPを使用しています。適宜お好みのフォントに変更してください。
-
 ```{r}
 #| label: plot-yearly-occurrence
 
-jp_font <- "Noto Sans JP"
 data_bind |>
   dplyr::group_by(Year) |>
   dplyr::tally() |>
@@ -424,8 +446,6 @@ kuma_map |>
 ```{r}
 #| label: clustr-markers
 
-years <- sort(unique(data_bind$Year))
-
 kuma_map |>
   addMarkers(lng = ~Longitude, lat = ~Latitude,
              clusterOptions = TRUE)
@@ -442,8 +462,12 @@ kuma_map |>
 ```{r}
 #| label: gsi-tiles
 
+# データ中の年を取得して、昇順に並べ替え
+years <- sort(unique(data_bind$Year))
+
 # カラーパレット
 # 1の黒はつかわない
+# 年数が増えたら、nを増やす
 pal_colors <- palette.colors(n = 8, palette = "Okabe-Ito",
                              recycle = TRUE)
 
