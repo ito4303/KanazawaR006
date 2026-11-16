@@ -7,12 +7,14 @@ format:
   html:
     code-copy: true
     embed-resources: true
+execute: 
+  echo: true
 editor: visual
 ---
 
 ## はじめに
 
-このチュートリアルでは、Rのleafletパッケージをつかった地図の表示方法について説明します。題材として、石川県のクマ出没情報を用い、その位置を地図上にプロットしていきます。
+このチュートリアルでは、Rのleafletパッケージをつかった地図の表示方法について説明します。題材として、石川県のクマ出没情報を用い、その位置を地図上にプロットすることを目的とします。
 
 ## 準備
 
@@ -214,6 +216,7 @@ purrr::map_int(data_list, nrow)
 なお、ファイルをダウンロードせずに、サイトのAPIを利用して直接読み込むことも可能です（ここでは例示だけです）。
 
 ```{r}
+#| label: fetch-data-from-api
 #| eval: false
 
 library(httr2)
@@ -280,7 +283,9 @@ data_bind |>
   dplyr::filter(ID == "2019-2075")
 ```
 
-同じデータなので、IDが重複しているデータを`distinct()`関数でまとめます。まず、IDが同じ行が全列でも同一かどうかを確認します（`0`なら、IDだけで重複を除いても情報が失われません）。
+同じデータなので、IDが重複しているデータを`distinct()`関数でまとめようと思います。
+
+まず、IDが同じ行が全列でも同一かどうかを確認します（`0`なら、IDだけで重複を除いても情報が失われません）。
 
 ```{r}
 #| label: check-identical-rows
@@ -290,7 +295,25 @@ nrow(dplyr::distinct(data_bind, ID)) - nrow(dplyr::distinct(data_bind))
 
 しかし、結果は`0`ではありませんでした。これは、IDが同じで、内容が異なるデータがあることをしめしています。
 
-ただ、確認すると表記揺れなどでしたので、このまま続行します。
+IDが重複している行のIDを確認します。
+
+```{r}
+data_bind |>
+  distinct() |>
+  count(ID) |>
+  filter(n > 1) |>
+  pull(ID)
+```
+
+ID:2019-2075と2020-1165を表示します。
+
+```{r}
+data_bind |>
+  dplyr::filter(ID == "2019-2075" | ID == "2020-1165") |>
+  dplyr::arrange(ID)
+```
+
+ほかも表記揺れや何かの誤りと思われました。そこで、IDが重複しているデータを`distinct()`関数でまとめます。
 
 ```{r}
 #| label: remove-duplicates
@@ -323,7 +346,7 @@ purrr::map(
 )
 ```
 
-これが他と重複していないか、ほかに同じ日時のデータがないかを確認することでチェックします。
+IDが"v"のデータが他と重複していないかどうか、ほかに同じ日時のデータがないかを確認することでチェックします。
 
 ```{r}
 #| label: check-same-datetime
@@ -331,7 +354,9 @@ purrr::map(
 data_bind |> filter(Date == "2020-10-31", Time == "6時15分")
 ```
 
-`Date`が欠損値の行を確認します。
+同じ日時のデータはありませんでした。
+
+つづいて、`Date`が欠損値の行を確認します。
 
 ```{r}
 #| label: check-missing-date
@@ -341,7 +366,9 @@ data_bind |>
   dplyr::select(ID, Date, Year, City, Location)
 ```
 
-`Hour`が欠損値で、`Time`が欠損値でない行を確認します。
+1個ありました。これはそのまま欠損値とします。
+
+次に、`Hour`が欠損値で、`Time`が欠損値でない行を確認します。
 
 ```{r}
 #| label: check-missing-hour
@@ -351,7 +378,9 @@ data_bind |>
   dplyr::select(ID, Date, Time, Hour)
 ```
 
-緯度・経度の欠損と、石川県のおおよその範囲（緯度36.0〜37.6、経度136.2〜137.4）から外れた値がないかを確認します。この範囲は県境そのものではなく長方形なので、隣県の一部は検出できません。0行なら問題なしです。
+いずれも問題はなしで、`Hour`は欠損値とします。
+
+さらに、緯度・経度の欠損と、石川県のおおよその範囲（緯度36.0〜37.6、経度136.2〜137.4）から外れた値がないかを確認します。この範囲は県境そのものではなく長方形なので、隣県の一部は検出できません。0行なら問題なしです。
 
 ```{r}
 #| label: check-coordinates
@@ -419,9 +448,9 @@ data_bind |>
 
 ## 地図上に表示
 
-### leafletを使用した地図
+### Leafletを使用した地図
 
-leafletを使用して、地図を表示します。デフォルトの地図はOpenStreetMapです。
+Leafletを使用して、地図を表示します。デフォルトの地図はOpenStreetMapです。
 
 ```{r}
 #| label: view-kuma-map
@@ -444,7 +473,7 @@ kuma_map |>
 近いマーカーをクラスター化します。
 
 ```{r}
-#| label: clustr-markers
+#| label: cluster-markers
 
 kuma_map |>
   addMarkers(lng = ~Longitude, lat = ~Latitude,

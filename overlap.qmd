@@ -145,10 +145,10 @@ ggplot(mesh17) +
 #| echo: true
 #| output: false
 
-data_file <- file.path("data", "1km_mesh_2024_17_GEOJSON",
+pref_data_file <- file.path("data", "1km_mesh_2024_17_GEOJSON",
                        "1km_mesh_2024_17.geojson")
 # CRSはEPSG:6668 (JGD2011)
-d_ppl <- st_read(data_file) |>
+d_ppl <- st_read(pref_data_file) |>
   # MESH_IDをmeshcode型に
   dplyr::mutate(MESH_ID = meshcode(MESH_ID))
 ```
@@ -160,7 +160,9 @@ d_ppl <- st_read(data_file) |>
 #| echo: true
 #| output-location: slide
 
-max_popl <- 10000
+# 1kmメッシュの人口の最大値を10000単位で切り上げて、凡例の上限にする
+max_popl <- ceiling(max(c(d_ppl$PTN_2020, d_ppl$PT00_2050),
+                        na.rm = TRUE) / 10000) * 10000
 ggplot(d_ppl) +
   geom_sf(aes(fill = PTN_2020), color = NA) +
   scale_fill_viridis_c(name = "人口",
@@ -235,9 +237,9 @@ d_ppl_mesh |>
 #| echo: true
 #| output: false
 
-data_file <- file.path("data", "P11-22_17_SHP",
-                       "P11-22_17.geojson")
-d_bus <- st_read(data_file)
+busstop_data_file <- file.path("data", "P11-22_17_SHP",
+                               "P11-22_17.geojson")
+d_bus <- st_read(busstop_data_file)
 # CRSは6668 JGD(2011)
 ```
 
@@ -249,8 +251,8 @@ d_bus <- st_read(data_file)
 #| echo: true
 
 d_bus_mesh <- d_bus |>
-  dplyr::mutate(MESH_ID = coords_to_mesh(geometry = geometry),
-                to_mesh_size = 1) |>
+  dplyr::mutate(MESH_ID = coords_to_mesh(geometry = geometry,
+                                         to_mesh_size = 1)) |>
   st_drop_geometry() |>
   dplyr::group_by(MESH_ID) |>
   dplyr::tally() |>
@@ -259,7 +261,7 @@ d_bus_mesh <- d_bus |>
 
 人口データとバス停データを結合
 
-あとでで使う`PTN_2020`, `PT00_2025`, `n`（バス停数）は、NAを0にしておく
+あとで使う`PTN_2020`, `PT00_2025`, `n`（バス停数）は、NAを0にしておく
 
 ```{r}
 #| label: combine-population-and-num-bus-stop
@@ -269,7 +271,7 @@ d_ppl_bus <- d_ppl_mesh |>
   tidyr::replace_na(list(PTN_2020 = 0, PT00_2025 = 0, n = 0))
 ```
 
-## leaflet地図と重ねる
+## Leaflet地図と重ねる
 
 ```{r}
 #| label: plot-bus-stop-num-leaflet
@@ -314,8 +316,9 @@ ggplot(d_ppl_bus, aes(x = PTN_2020, y = n)) +
 ```{r}
 #| label: filter-city-code-no-bus-stop
 
+limit_min <- 1000
 d_no_bus <- d_ppl_bus |>
-  dplyr::filter(PTN_2020 >= 1000, n == 0)
+  dplyr::filter(PTN_2020 >= limit_min, n == 0)
 d_no_bus |>
   dplyr::pull(SHICODE) |>
   table()
@@ -335,7 +338,7 @@ d_ppl_mesh |>
   geom_sf(aes(fill = PTN_2020), color = "gray", alpha = 0.5) +
   scale_fill_viridis_c(name = "人口",
                        transform = "log1p",
-                       limits = c(1, 10000),
+                       limits = c(1, max_popl),
                        breaks = c(1, 10, 100, 1000, 10000),
                        na.value = "white") +
   geom_sf(data = d_no_bus, color = "red") +
@@ -352,18 +355,27 @@ d_ppl_mesh |>
 #| echo: true
 #| output-location: slide
 
-ref17 |>
+limit_max <- ceiling(max(d_no_bus$PTN_2020,
+                         na.rm = TRUE) / 1000) * 1000
+
+pref17 |>
   dplyr::filter(N03_004 %in% c("内灘町", "かほく市", "津幡町", "金沢市",
                                "白山市", "能美市", "小松市", "加賀市")) |>
   ggplot() +
   geom_sf() +
-  geom_sf(data = d_no_bus, aes(fill = PTN_2020), alpha = 0.5) +
+  geom_sf(data = d_no_bus, aes(fill = PTN_2020)) +
+  scale_fill_viridis_c(name = "人口",
+                       transform = "log1p",
+                       limits = c(limit_min, limit_max),
+                       breaks = seq(limit_min, limit_max,
+                                    by = 1000),
+                       na.value = "white") +
   labs(title = "人口が多いがバス停がないメッシュ",
        fill = "人口") +
   theme_void(base_family = jp_font)
 ```
 
-## 拡大表示できるようleafletと重ねる
+## 拡大表示できるようLeafletと重ねる
 
 ```{r}
 #| label: plot_over_leaflet
@@ -396,7 +408,7 @@ map_no_bus |>
 ```{r}
 #| label: filter-no-population-bus-stop
 
-d_bus_pop0 <- d_ppl_bus |>
+d_bus0_pop <- d_ppl_bus |>
   dplyr::filter(PTN_2020 == 0, n > 0)
 ```
 
@@ -405,7 +417,7 @@ d_bus_pop0 <- d_ppl_bus |>
 ```{r}
 #| label: plot-no-population-bus-stop_leaflet
 
-leaflet(data = st_transform(d_bus_pop0, crs = 4326)) |> # WGS84
+leaflet(data = st_transform(d_bus0_pop, crs = 4326)) |> # WGS84
   addTiles() |>
   addCircleMarkers(data = st_transform(d_bus, crs = 4326),
                    radius = 3, weight = 2, opacity = 0.2) |>
@@ -414,7 +426,11 @@ leaflet(data = st_transform(d_bus_pop0, crs = 4326)) |> # WGS84
 
 ## おわりに
 
-ポイント
+**ポイント**
+
+- オープンデータの利用
+
+- 地理データ: Rのsfパッケージ
 
 - 座標系（CRS）
 

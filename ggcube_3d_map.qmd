@@ -69,7 +69,7 @@ if (!dir.exists(output_dir)) {
 
 ## データの読み込み
 
-terraパッケージのrast()関数でGeoTIFFを読み込んで、概要を表示します。
+terraパッケージの`rast()`関数でGeoTIFFを読み込んで、概要を表示します。
 
 ```{r}
 #| label: read_geotiff
