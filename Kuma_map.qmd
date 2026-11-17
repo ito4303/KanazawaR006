@@ -9,6 +9,7 @@ format:
     embed-resources: true
 execute: 
   echo: true
+  output: true
 editor: visual
 ---
 
@@ -29,6 +30,7 @@ library(tidyverse)
 library(leaflet)
 
 jp_font <- "Noto Sans JP"
+# jp_font <- "Yu Gothic"  # 游ゴシック体を使うなら
 ```
 
 ## データ
@@ -46,24 +48,24 @@ jp_font <- "Noto Sans JP"
 - 石川県クマ出没分析マップ（R1〜R6）- (4)親離れした若クマによる出没（R1-R6)
 - 石川県クマ出没分析マップ（R1〜R6）- (5)大量出没年に特有の出没（R2)
 
-ダウンロードしたデータは`data`ディレクトリに入れておきます。
+ダウンロードしたデータは`kuma_data`ディレクトリに入れておきます。
 
 ```{r}
 #| label: data-files
 
 data_files <- c(
-  "data/7584d555-e1f8-4639-b62d-919445970236.csv",
-  "data/bear_incidents_forest_r1-r6.csv",
-  "data/bear_incidents_river_r1-r6.csv",
-  "data/bear_incidents_attractants_r1-r6.csv",
-  "data/bear_incidents_young_bears_r1-r6.csv",
-  "data/bear_incidents_mass_outbreak_r2.csv"
+  "kuma_data/7584d555-e1f8-4639-b62d-919445970236.csv",
+  "kuma_data/bear_incidents_forest_r1-r6.csv",
+  "kuma_data/bear_incidents_river_r1-r6.csv",
+  "kuma_data/bear_incidents_attractants_r1-r6.csv",
+  "kuma_data/bear_incidents_young_bears_r1-r6.csv",
+  "kuma_data/bear_incidents_mass_outbreak_r2.csv"
 )
 ```
 
 ### データ読み込み
 
-データを読み込む関数を定義します。
+データを読み込む関数を定義します。今回のデータはTidy data（整然データ）になっていますが、2025年と2024年以前とでは形式が異なります。また、いくつかの項目では追加の処理が必要になります。このため、それぞれに読み込み用の関数を定義します。
 
 まず、2025年用の関数です。
 
@@ -183,7 +185,7 @@ read_data_2019 <- function(file) {
 }
 ```
 
-試しに、2番目のファイルで関数が動作することを確認します。
+ためしに、2019年のファイル(`kuma_data/bear_incidents_forest_r1-r6.csv`)で関数の動作を確認します。警告が出ますが、これは`出没日`がExcelのシリアル値の場合の処理が、`case_when()`関数の仕様として、いったんすべての値に対しておこなわれるためで、問題はありません。
 
 ```{r}
 #| label: test-read-function
@@ -191,7 +193,7 @@ read_data_2019 <- function(file) {
 read_data_2019(data_files[2])
 ```
 
-読み込みます。
+読み込みます。ここでも警告がでますが、問題はありません。
 
 ```{r}
 #| label: read-data-files
@@ -486,7 +488,7 @@ kuma_map |>
 
 <https://maps.gsi.go.jp/development/ichiran.html>
 
-ここでは、電子国土基本図（オルソ画像）（2007年～）を地図として表示します。マーカーを円形にして、年ごとに色を変えます。
+ここでは、電子国土基本図（オルソ画像）（2007年～）を地図として表示します。マーカーを円形にして、年ごとに色を変えます。また、マーカーをクリックすると、出没日、時刻、備考が表示されるようにします。
 
 ```{r}
 #| label: gsi-tiles
@@ -509,7 +511,9 @@ leaflet(data = data_bind) |>
                    opacity = 0.9,
                    fillOpacity = 0.5,
                    radius = 5,
-                   weight = 3) |>
+                   weight = 3,
+                   popup = ~str_c(Date, Time, Note, sep = " ") |>
+                     htmltools::htmlEscape())|>
   addLegend("bottomright",
             colors = unname(pal_colors[years - 2017]),
             labels = years,
@@ -520,3 +524,11 @@ leaflet(data = data_bind) |>
 拡大してみると、森林と市街地の境界附近で出没情報が多いことがわかります。
 
 ## おわりに
+
+### ポイント
+
+- データの確認
+  - 表記揺れや入力ミス、その他の間違いのチェック
+- 地図上に表示
+  - 最初は簡単に
+  - だんだん情報を増やしていく

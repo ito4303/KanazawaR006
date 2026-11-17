@@ -54,6 +54,8 @@ rsconnect/
 
 # Data
 data/
+kuma_data/
+kuma_data.zip
 images/
 
 # Output files and intermediate files
