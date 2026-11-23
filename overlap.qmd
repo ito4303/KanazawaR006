@@ -60,7 +60,7 @@ jp_font <- "Noto Sans JP"
 
   - sfパッケージの`st_read()`または`read_sf()`関数
 
-- 座標系(CRS)はJGD2011(EPSG:6668) ← 長くなるので今回は詳しくは話しません
+- 座標参照系（CRS）はJGD2011（EPSG:6668）
 
 ```{r}
 #| label: data-N03
@@ -69,8 +69,22 @@ jp_font <- "Noto Sans JP"
 
 data_file <- file.path("data", "N03-20260101_17_GML",
                        "N03-20260101_17.geojson")
-pref17 <- sf::st_read(data_file)
+pref17 <- sf::st_read(data_file, quiet = TRUE)
 ```
+
+## 座標参照系（<abbr title="Coodinate Reference System">CRS</abbr>）
+
+地球上の位置をどのように数値座標に落とすか
+
+- 地理座標系（←今回はこちらだけ）
+  - 緯度と経度（単位は度）
+  - GPSの位置（WGS84）など
+- 投影座標系
+  - 平面に投影した座標（単位はm）
+    - 距離や面積を測定したいとき
+  - 日本の平面直角座標系など
+
+地図にデータを重ねるときは、**座標参照系をあわせる**
 
 ## 行政区域をggplotで描画
 
@@ -87,21 +101,19 @@ ggplot(pref17) +
 
 ## 標準地域メッシュ
 
-「統計に用いる標準地域メッシュおよび標準地域メッシュ・コード」
+日本の地域をメッシュに区切って扱いやすくしたもの、メッシュ単位の統計データも各種あり（将来人口推計も）
 
-日本の地域をメッシュに区切って扱いやすくしたもの
+|             | 緯度差、経度差           | 1辺の長さ |
+|-------------|--------------------------|-----------|
+| 1次メッシュ | 緯度差40分、経度差1度    | 約80km    |
+| 2次メッシュ | 緯度差5分、経度差7分30秒 | 約10km    |
+| 3次メッシュ | 緯度差30秒、経度差45秒   | 約1km     |
 
-- 1次メッシュ: 緯度差40分、経度差1度、1辺の長さ約80km
+※ 3次メッシュをさらに細分化したものもあり
 
-- 2次メッシュ: 緯度差5分、経度差7分30秒、1辺の長さ約10km
+## 石川県の3次メッシュの作成
 
-- 3次メッシュ: 緯度差30秒、経度差45秒、1辺の長さは約1km
-
-3次メッシュをさらに細分化したものもあり
-
-## 石川県の3次（1km）メッシュの作成
-
-石川県の領域の3次メッシュをつくっておく
+石川県の領域の3次（1km）メッシュをつくっておく
 
 ```{r}
 #| label: generate-1km-mesh
@@ -136,7 +148,7 @@ ggplot(mesh17) +
 
 - 国土数値情報: [1kmメッシュ別将来推計人口データ（R6国政局推計）](https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-mesh1000r6.html)
 
-  - 2020年時点での、3次メッシュごとの将来の人口推計
+  - 2020年時点での、3次メッシュごとの将来の推計人口
 
 石川県のデータをダウンロードしておく
 
@@ -152,6 +164,14 @@ d_ppl <- st_read(pref_data_file) |>
   # MESH_IDをmeshcode型に
   dplyr::mutate(MESH_ID = meshcode(MESH_ID))
 ```
+
+## 使用する列（変数）
+
+- `PTN_2020`: 2020年の総人口
+
+- `PT00_2050`: 2050年での推計総人口
+
+※ 2020年の総人口=0のメッシュはデータに含まれていない（欠損値になっている）と思われる
 
 ## 2020年の石川県の人口分布
 
@@ -185,7 +205,7 @@ d_ppl_mesh <- mesh17 |>
 
 ## メッシュでプロット
 
-人口がNA（記載なし=0）のところは白色に(`na.value = "white"`)
+人口がNA（記載なし=人口0）のところは白色に(`na.value = "white"`)
 
 ```{r}
 #| label: plot-population-2020-2
@@ -199,13 +219,13 @@ ggplot(d_ppl_mesh) +
                        limits = c(1, max_popl),
                        breaks = c(1, 10, 100, 1000, 10000),
                        na.value = "white") +
-  labs(title = "2020年の1kmメッシュごと人口") +
+  labs(title = "1kmメッシュごとの2020年の総人口") +
   theme_void(base_family = jp_font)
 ```
 
 ## 2050年の石川県の推計人口分布
 
-人口推計値が0のところは白色
+2025年の推計値が0のところも白色
 
 ※ 推計時点では2024年の能登半島地震の影響は考慮されていない
 
@@ -224,7 +244,7 @@ d_ppl_mesh |>
                        limits = c(1, max_popl),
                        breaks = c(1, 10, 100, 1000, 10000),
                        na.value = "white") +
-  labs(title = "2050年の1kmメッシュごと推計人口") +
+  labs(title = "1kmメッシュごとの2050年の推計総人口") +
   theme_void(base_family = jp_font)
 ```
 
@@ -254,21 +274,20 @@ d_bus_mesh <- d_bus |>
   dplyr::mutate(MESH_ID = coords_to_mesh(geometry = geometry,
                                          to_mesh_size = 1)) |>
   st_drop_geometry() |>
-  dplyr::group_by(MESH_ID) |>
-  dplyr::tally() |>
+  dplyr::count(MESH_ID) |>
   dplyr::select(MESH_ID, n)
 ```
 
 人口データとバス停データを結合
 
-あとで使う`PTN_2020`, `PT00_2025`, `n`（バス停数）は、NAを0にしておく
+あとで使う`PTN_2020`（2020年の総人口）と`n`（バス停数）は、NAを0に置換
 
 ```{r}
 #| label: combine-population-and-num-bus-stop
 
 d_ppl_bus <- d_ppl_mesh |>
   dplyr::left_join(d_bus_mesh, by = "MESH_ID") |>
-  tidyr::replace_na(list(PTN_2020 = 0, PT00_2025 = 0, n = 0))
+  tidyr::replace_na(list(PTN_2020 = 0, n = 0))
 ```
 
 ## Leaflet地図と重ねる
@@ -307,7 +326,7 @@ ggplot(d_ppl_bus, aes(x = PTN_2020, y = n)) +
   theme_bw(base_family = jp_font)
 ```
 
-## 人口が多けれどもバス停がない地域
+## 人口が多いけれどもバス停がない地域
 
 メッシュの人口が1000人以上いるけれども、バス停がないところを抽出
 
@@ -414,6 +433,8 @@ d_bus0_pop <- d_ppl_bus |>
 
 ## 地図表示
 
+d_bus0_popの座標参照系（CRS）をWGS84（EPSG: 4326）に変換しておく
+
 ```{r}
 #| label: plot-no-population-bus-stop_leaflet
 
@@ -426,7 +447,7 @@ leaflet(data = st_transform(d_bus0_pop, crs = 4326)) |> # WGS84
 
 ## おわりに
 
-**ポイント**
+### ポイント {style="margin-top: 0.5em;"}
 
 - オープンデータの利用
 
