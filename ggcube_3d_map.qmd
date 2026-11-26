@@ -27,7 +27,6 @@ editor: visual
 
 library(tidyverse)
 library(terra)
-library(ggplot2)
 library(ggcube)
 
 # フォント
@@ -131,6 +130,7 @@ map_3d
 #| label: plot-3d-animation
 #| echo: true
 #| cache: true
+#| dependson: "plot-3d-dem"
 
 anim_map <- animate_3d(map_3d,
                        yaw = c(0, 360),
