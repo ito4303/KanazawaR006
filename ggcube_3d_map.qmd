@@ -46,19 +46,14 @@ if (!dir.exists(output_dir)) {
 
 10mメッシュ (10B) の以下のファイルをダウンロードしました。
 
-- ::: {style="font-size: 75%;"}
-  - FG-GML-5436-55-dem10b-20161001.xml
-
-  - FG-GML-5436-64-dem10b-20161001.xml
-
-  - FG-GML-5436-65-dem10b-20161001.xml
-
-  - FG-GML-5436-44-dem10b-20161001.xml
-
-  - FG-GML-5436-45-dem10b-20161001.xml
-
-  - FG-GML-5436-54-dem10b-20161001.xml
-  :::
+::: {style="font-size: 75%;"}
+- FG-GML-5436-55-dem10b-20161001.xml
+- FG-GML-5436-64-dem10b-20161001.xml
+- FG-GML-5436-65-dem10b-20161001.xml
+- FG-GML-5436-44-dem10b-20161001.xml
+- FG-GML-5436-45-dem10b-20161001.xml
+- FG-GML-5436-54-dem10b-20161001.xml
+:::
 
 ## 前処理
 

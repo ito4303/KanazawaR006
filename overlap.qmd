@@ -32,6 +32,7 @@ editor: visual
 
 ```{r}
 #| label: setup
+#| echo: false
 #| output: false
 
 library(tidyverse)
@@ -64,12 +65,12 @@ jp_font <- "Noto Sans JP"
 
 - 座標参照系（CRS）はJGD2011（EPSG:6668）
 
----
+------------------------------------------------------------------------
 
 ```{r}
 #| label: data-N03
 #| echo: true
-#| output: false
+#| output: true
 
 data_file <- file.path("data", "N03-20260101_17_GML",
                        "N03-20260101_17.geojson")
@@ -273,8 +274,10 @@ d_bus <- st_read(busstop_data_file, quiet = TRUE)
 #| echo: true
 
 d_bus_mesh <- d_bus |>
-  dplyr::mutate(MESH_ID = coords_to_mesh(geometry = geometry,
-                                         to_mesh_size = 1)) |>
+  dplyr::mutate(
+    MESH_ID = jpmesh::coords_to_mesh(geometry = geometry,
+                                     to_mesh_size = 1)
+  ) |>
   st_drop_geometry() |>     # geometryを削除
   dplyr::count(MESH_ID) |>  # MESH_IDごとに列数を数える
   dplyr::select(MESH_ID, n) # MESH_IDとバス停数nの列だけにする
@@ -302,8 +305,7 @@ pal_bus <- colorNumeric("YlOrRd", domain = d_ppl_bus$n,
 
 ## Leaflet地図と重ねる
 
-`d_ppl_bus`のCRSを  `st_transform()`でWGS84（EPSG:4326）に変換して、地理院タイルに重ねる
-
+`d_ppl_bus`のCRSを `st_transform()`でWGS84（EPSG:4326）に変換して、地理院タイルに重ねる
 
 ```{r}
 #| label: plot-bus-stop-num-leaflet
@@ -327,6 +329,8 @@ leaflet(data = st_transform(d_ppl_bus, 4326)) |> # WGS84
 
 ```{r}
 #| label: plot-population-vs-busstop
+#| output: true
+#| output-location: slide
 
 ggplot(d_ppl_bus, aes(x = PTN_2020, y = n)) +
   geom_point(alpha = 0.6) +
@@ -339,18 +343,25 @@ ggplot(d_ppl_bus, aes(x = PTN_2020, y = n)) +
   theme_bw(base_family = jp_font)
 ```
 
-## 人口が多いけれどもバス停がない地域
+## 人口が多いのにバス停がない地域
 
 メッシュの人口が1000人以上いるけれども、バス停がないところを抽出
 
-結果から市町村コードを表示
-
 ```{r}
 #| label: filter-city-code-no-bus-stop
+#| echo: true
 
 limit_min <- 1000
 d_no_bus <- d_ppl_bus |>
   dplyr::filter(PTN_2020 >= limit_min, n == 0)
+```
+
+## 結果から市町村コードを表示
+
+```{r}
+#| label: print-city-code-no-bus-stop
+#| echo: true
+
 d_no_bus |>
   dplyr::pull(SHICODE) |>
   table()
@@ -426,7 +437,7 @@ map_no_bus <- leaflet(data = st_transform(d_no_bus, crs = 4326)) |>
             position = "bottomright")
 ```
 
-## 人口が多いのにバス停がない地域
+## 人口の割にバス停がない地域
 
 ```{r}
 #| label: plot-map_no-bus-stop
@@ -435,11 +446,15 @@ map_no_bus <- leaflet(data = st_transform(d_no_bus, crs = 4326)) |>
 map_no_bus
 ```
 
-
 ## バス停を追加表示
+
+`d_bus`の座標参照系（CRS）をWGS84（EPSG: 4326）に変換する
 
 ```{r}
 #| label: plot_with-bus-stop-location
+#| echo: true
+#| output: true
+#| output-location: slide
 
 map_no_bus |>
   addCircleMarkers(data = st_transform(d_bus, crs = 4326),
@@ -459,7 +474,7 @@ d_bus0_pop <- d_ppl_bus |>
 
 ## 地図表示
 
-`d_bus0_pop`の座標参照系（CRS）をWGS84（EPSG: 4326）に変換しておく
+`d_bus0_pop`の座標参照系（CRS）をWGS84（EPSG: 4326）に変換する
 
 ```{r}
 #| label: plot-no-population-bus-stop_leaflet

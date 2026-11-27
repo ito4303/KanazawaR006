@@ -1,0 +1,33 @@
+---
+title: "チュートリアル:Rでクマ出没地図を作成しよう"
+author: "伊東宏樹"
+date: 2026-11-28
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    code-copy: true
+    embed-resources: true
+    slide-number: true
+---
+
+## 誰?
+
+- 氏名: 伊東宏樹
+- 個人事業主（データ解析など）
+- 出版物: 『[BUGSで学ぶ階層モデリング入門](https://www.kyoritsu-pub.co.jp/book/b10003729.html)』『[生態学のための階層モデリング](https://www.kyoritsu-pub.co.jp/book/b10003301.html)』（以上共訳）など
+
+![](images/9784320057807.jpg) ![](images/9784320058149.jpg) ![](images/9784762830839.jpg) ![](images/9784812211427.jpg)
+
+## 近況
+
+石川県トキモニタリングボランティアをやってます
+
+![](images/Toki.jpg)
+
+## 内容
+
+- オープンデータの利用（[石川県クマ出没データ](https://ckan.opendata.pref.ishikawa.lg.jp/dataset/bear_incidents_data)）
+- データのクリーニング・前処理
+- インタラクティブな地図作成（Leaflet）
+
+![](images/map.png)
