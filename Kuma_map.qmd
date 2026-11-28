@@ -1,5 +1,6 @@
 ---
 title: "Rでクマ出没地図を作成しよう"
+subtitle: "Kanazawa.R #6"
 author: "伊東宏樹"
 date: 2026-11-28
 lang: ja
@@ -122,8 +123,8 @@ read_data_2025 <- function(file) {
 
 # 2019-2024年
 read_data_2019 <- function(file) {
-  d <- read_csv(file)
-  
+  d <- read_csv(file, show_col_types = FALSE)
+
   # `出没年` が "R1"〜"R6" の形式かチェック
   bad <- d |>
     dplyr::filter(!str_detect(`出没年`, "^R[1-6]$"))
@@ -132,7 +133,7 @@ read_data_2019 <- function(file) {
                  file, nrow(bad),
                  paste(unique(bad$`出没年`), collapse = ", ")))
   }
-  
+
   d <- d |>
     dplyr::mutate(
       # 出没年: "R1, R2, ..." を西暦に変換します

@@ -1,5 +1,6 @@
 ---
 title: "いろいろなデータを<br />地図にかさねる"
+subtitle: "Kanazawa.R #6"
 author: "伊東宏樹"
 date: 2026-11-28
 lang: ja
@@ -78,13 +79,13 @@ isikawa <- sf::st_read(data_file, quiet = TRUE)
 sf::st_crs(isikawa) # CRSの確認
 ```
 
-## 座標参照系（<abbr title="Coodinate Reference System">CRS</abbr>）
+## 座標参照系（<abbr title="Coordinate Reference System">CRS</abbr>）
 
 地球上の位置をどのように数値座標に落とすか
 
 - 地理座標系（←今回はこちらだけ）
   - 緯度と経度（単位は度）
-  - GPSの位置（WGS84）など
+  - GPSの位置（“WGS84”）など
 - 投影座標系（←距離や面積を測定したいとき）
   - 平面に投影した座標（単位はm）
   - 日本の平面直角座標系など
@@ -375,6 +376,7 @@ d_no_bus |>
 
 ```{r}
 #| label: plot-mesh-no-bus-stop
+#| output-location: slide
 
 d_ppl_mesh |>
   ggplot() +

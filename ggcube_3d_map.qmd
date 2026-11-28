@@ -1,5 +1,6 @@
 ---
 title: "ggcubeで3D地図"
+subtitle: "Kanazawa.R #6"
 author: "伊東宏樹"
 date: 2026-11-28
 format:
